@@ -19,8 +19,8 @@ from hw1_imitation.data import (
     download_pusht,
     load_pusht_zarr,
 )
-from hw1_imitation.model import build_policy, PolicyType
 from hw1_imitation.evaluation import Logger
+from hw1_imitation.model import PolicyType, build_policy
 
 LOGDIR_PREFIX = "exp"
 
