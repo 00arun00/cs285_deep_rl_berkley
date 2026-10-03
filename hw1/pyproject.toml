@@ -12,7 +12,6 @@ dependencies = [
     "modal>=1.2.6",
     "pymunk<7",
     "ruff>=0.14.10",
-    "setuptools>=80.9.0",
     "torch>=2.9.1",
     "tyro>=1.0.3",
     "wandb==0.23.1",
@@ -33,3 +32,7 @@ where = ["src"]
 dev = [
     "jupyterlab>=4.6.4",
 ]
+
+[tool.uv]
+# Use pygame's resource-loading fallback when setuptools is needed transitively.
+constraint-dependencies = ["setuptools>=82"]
