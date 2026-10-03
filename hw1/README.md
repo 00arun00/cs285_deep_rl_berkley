@@ -66,8 +66,13 @@ uv run modal volume get hw1-imitation-volume exp/<experiment_name>
 
 After each rollout evaluation, including the final training step, the driver
 saves `policy_step_<step>.pt` under the W&B run's `checkpoints/` directory and
-uploads it as a model artifact. Every evaluation checkpoint is retained; there
-is currently no overwrite or top-K retention policy.
+uploads it as a model artifact. `--checkpoint-top-k` (default: 3) retains the
+best K checkpoints by rollout mean reward, plus latest, locally and in W&B.
+Ties favor the earlier checkpoint; zero keeps only latest. W&B aliases identify
+`best` (when K > 0) and `latest`. Pruning waits for upload completion and requires
+online W&B logging. Cleanup failures are logged and retried at the next save,
+so failed cleanup can temporarily leave extra versions. W&B cache files and
+evaluation videos are not covered by this policy.
 
 The policy checkpoint format (version 1) contains:
 

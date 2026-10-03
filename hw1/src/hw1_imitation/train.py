@@ -61,6 +61,9 @@ class TrainConfig:
     validation_interval: int = 100
     eval_interval: int = 10_000
 
+    # Retain the best K rollout checkpoints, plus latest (0 = latest only).
+    checkpoint_top_k: int = 3
+
     # Rollout inference and video recording.
     # flow_num_steps is ignored by MSE policies.
     flow_num_steps: int = 10
@@ -84,6 +87,9 @@ class TrainConfig:
         ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
+
+        if self.checkpoint_top_k < 0:
+            raise ValueError("checkpoint_top_k must be nonnegative")
 
         if self.num_video_episodes < 0:
             raise ValueError("num_video_episodes must be nonnegative")
@@ -260,6 +266,7 @@ def run_training(config: TrainConfig) -> None:
         dir=str(log_dir),
     ) as run:
         logger = ExperimentLogger(log_dir, run=run)
+        checkpoints: dict[int, tuple[float, Path, wandb.Artifact]] = {}
 
         with tqdm(
             total=total_steps,
@@ -374,6 +381,9 @@ def run_training(config: TrainConfig) -> None:
                         log_checkpoint_artifact(
                             model=model,
                             step=global_step,
+                            mean_reward=result.mean_reward,
+                            top_k=config.checkpoint_top_k,
+                            checkpoints=checkpoints,
                             normalizer=normalizer,
                             flow_num_steps=config.flow_num_steps,
                         )

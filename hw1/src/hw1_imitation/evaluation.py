@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import math
 from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,14 +56,30 @@ def log_checkpoint_artifact(
     *,
     normalizer: Normalizer,
     flow_num_steps: int,
+    mean_reward: float,
+    top_k: int,
+    checkpoints: dict[int, tuple[float, Path, wandb.Artifact]],
 ) -> None:
-    """Save a reusable policy and upload it to the active W&B run."""
-    if wandb.run is None:
+    """Save an evaluated policy and retain the best K plus latest.
+
+    The caller owns the per-run mapping from step to score, local path, and
+    uploaded artifact. Higher rewards win; ties favor earlier steps.
+    Zero keeps only latest. Online W&B logging is required.
+
+    Upload completion is confirmed before pruning. Cleanup failures are
+    logged and retried at the next checkpoint; save/upload errors propagate.
+    """
+    run = wandb.run
+    if run is None:
         raise RuntimeError("wandb.init did not create a run.")
+    if run.offline:
+        raise ValueError("Remote checkpoint retention requires online W&B.")
+    if top_k < 0:
+        raise ValueError("top_k must be nonnegative")
+    if not math.isfinite(mean_reward):
+        raise ValueError("Checkpoint mean_reward must be finite")
 
-    checkpoint_dir = Path(wandb.run.dir) / "checkpoints"
-    checkpoint_path = checkpoint_dir / f"policy_step_{step}.pt"
-
+    checkpoint_path = Path(run.dir) / "checkpoints" / f"policy_step_{step}.pt"
     save_policy(
         path=checkpoint_path,
         model=model,
@@ -69,19 +87,54 @@ def log_checkpoint_artifact(
         flow_num_steps=flow_num_steps,
     )
 
+    # Use the same retention decision for local files and remote versions.
+    scores = {saved_step: score for saved_step, (score, _, _) in checkpoints.items()}
+    scores[step] = mean_reward
+    ranked_steps = sorted(
+        scores, key=lambda saved_step: (-scores[saved_step], saved_step)
+    )
+    keep_steps = set(ranked_steps[:top_k]) | {step}
+
     artifact = wandb.Artifact(
-        name=f"policy-checkpoint-{wandb.run.id}",
+        name=f"policy-checkpoint-{run.id}",
         type="model",
         metadata={
             "step": step,
+            "mean_reward": mean_reward,
             "format_version": CHECKPOINT_VERSION,
         },
     )
-    artifact.add_file(
-        checkpoint_path.as_posix(),
-        name=checkpoint_path.name,
-    )
-    wandb.log_artifact(artifact)
+    artifact.add_file(checkpoint_path.as_posix(), name=checkpoint_path.name)
+
+    # Logging moves these aliases; it does not remove older versions.
+    aliases = ["latest"]
+    if top_k > 0 and ranked_steps[0] == step:
+        aliases.append("best")
+    uploaded = run.log_artifact(artifact, aliases=aliases)
+    uploaded.wait()
+    checkpoints[step] = (mean_reward, checkpoint_path, uploaded)
+
+    for saved_step, (_, path, old_artifact) in list(checkpoints.items()):
+        if saved_step in keep_steps:
+            continue
+
+        # Prune local files even when remote cleanup is temporarily unavailable.
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            logging.exception(
+                "Could not delete local checkpoint at step %s", saved_step
+            )
+            continue
+
+        try:
+            # Default deletion protects versions with user-assigned aliases.
+            old_artifact.delete()
+        except Exception:
+            logging.exception("Could not delete W&B checkpoint at step %s", saved_step)
+            continue
+
+        del checkpoints[saved_step]
 
 
 @torch.no_grad()
