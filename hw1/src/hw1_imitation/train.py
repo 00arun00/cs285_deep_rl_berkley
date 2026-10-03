@@ -341,6 +341,8 @@ def run_training(config: TrainConfig) -> None:
                         log_checkpoint_artifact(
                             model=model,
                             step=global_step,
+                            normalizer=normalizer,
+                            flow_num_steps=config.flow_num_steps,
                         )
 
                         progress.set_description_str("Train")

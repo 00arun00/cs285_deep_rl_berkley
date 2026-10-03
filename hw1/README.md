@@ -61,3 +61,52 @@ Then, you can download the logs and checkpoints to your local machine using a co
 ```bash
 uv run modal volume get hw1-imitation-volume exp/<experiment_name>
 ```
+
+## Reusing policy checkpoints
+
+After each rollout evaluation, including the final training step, the driver
+saves `policy_step_<step>.pt` under the W&B run's `checkpoints/` directory and
+uploads it as a model artifact. Every evaluation checkpoint is retained; there
+is currently no overwrite or top-K retention policy.
+
+The policy checkpoint format (version 1) contains:
+
+- Model architecture, including the prediction horizon (`chunk_size`).
+- Learned weights, saved as CPU tensors.
+- Observation and action normalization statistics.
+- Default flow inference settings (`flow_num_steps`).
+
+Files are written atomically and loaded with `weights_only=True`. They do not
+contain optimizer history, random state, or training position. Legacy whole-model
+`.pkl` files and earlier experimental resume-checkpoint schemas are unsupported.
+
+### Load for inference or evaluation
+
+The original training dataset is not needed:
+
+```python
+import torch
+from hw1_imitation.checkpoint import load_policy
+
+model, normalizer, inference_config = load_policy(
+    "policy_step_12000.pt",
+    device="cpu",
+)
+
+# raw_observations: NumPy array shaped (batch, state_dim).
+states = torch.as_tensor(
+    normalizer.normalize_state(raw_observations),
+    dtype=torch.float32,
+)
+with torch.no_grad():
+    normalized_actions = model.sample_actions(
+        states,
+        num_steps=inference_config["flow_num_steps"],
+    )
+actions = normalizer.denormalize_action(normalized_actions.cpu().numpy())
+# Clip actions to the environment's bounds before stepping it.
+```
+
+The loader returns the model in evaluation mode. For rollout evaluation, pass
+`model.chunk_size` and the saved `flow_num_steps` to `evaluate_policy()`. You can
+explicitly choose a different flow integration step count when evaluating.
