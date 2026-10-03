@@ -15,6 +15,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 import wandb
+from hw1_imitation.checkpoint import CHECKPOINT_VERSION, save_policy
 from hw1_imitation.data import Normalizer
 from hw1_imitation.logging_utils import open_video_writer
 from hw1_imitation.model import BasePolicy
@@ -47,22 +48,39 @@ def resize_frame(frame: np.ndarray, size: tuple[int, int]) -> np.ndarray:
     return np.asarray(resized)
 
 
-def log_checkpoint_artifact(model: BasePolicy, step: int) -> None:
+def log_checkpoint_artifact(
+    model: BasePolicy,
+    step: int,
+    *,
+    normalizer: Normalizer,
+    flow_num_steps: int,
+) -> None:
+    """Save a reusable policy and upload it to the active W&B run."""
     if wandb.run is None:
         raise RuntimeError("wandb.init did not create a run.")
 
-    run_dir = Path(wandb.run.dir)
-    checkpoint_dir = run_dir / "checkpoints"
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint_path = checkpoint_dir / f"checkpoint_step_{step}.pkl"
-    torch.save(model, checkpoint_path)
+    checkpoint_dir = Path(wandb.run.dir) / "checkpoints"
+    checkpoint_path = checkpoint_dir / f"policy_step_{step}.pt"
+
+    save_policy(
+        path=checkpoint_path,
+        model=model,
+        normalizer=normalizer,
+        flow_num_steps=flow_num_steps,
+    )
 
     artifact = wandb.Artifact(
         name=f"policy-checkpoint-{wandb.run.id}",
         type="model",
-        metadata={"step": step},
+        metadata={
+            "step": step,
+            "format_version": CHECKPOINT_VERSION,
+        },
     )
-    artifact.add_file(checkpoint_path.as_posix(), name=checkpoint_path.name)
+    artifact.add_file(
+        checkpoint_path.as_posix(),
+        name=checkpoint_path.name,
+    )
     wandb.log_artifact(artifact)
 
 
