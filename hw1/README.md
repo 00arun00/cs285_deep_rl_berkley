@@ -110,3 +110,37 @@ actions = normalizer.denormalize_action(normalized_actions.cpu().numpy())
 The loader returns the model in evaluation mode. For rollout evaluation, pass
 `model.chunk_size` and the saved `flow_num_steps` to `evaluate_policy()`. You can
 explicitly choose a different flow integration step count when evaluating.
+
+### Train further from saved weights
+
+Run these commands from `hw1/`. To initialize a new training run from a policy:
+
+```bash
+uv run src/hw1_imitation/train.py --init-from /path/to/policy_step_12000.pt --num-epochs 20 --lr 0.0001
+```
+
+This trains for **20 additional epochs** with a fresh optimizer, seed, counters,
+and logging run. Training and evaluation settings come from the new invocation's
+flags and defaults; the previous training configuration is not inherited.
+In particular, evaluations use the new run's `--flow-num-steps` value.
+
+The loaded policy supplies its architecture and normalizer. `--policy-type`,
+`--hidden-dims`, and `--chunk-size` apply only to fresh models. Data preparation and
+rollout evaluation use the loaded model's actual horizon. The actual architecture
+is recorded under `model_config` in W&B alongside the requested run settings.
+New demonstrations must have compatible observation/action dimensions and meaning;
+the saved normalization is reused rather than fitted again.
+
+Omit `--init-from` to train a new model. Training loss is logged every
+`log_interval` steps and at the final step; loss windows may span epochs.
+This workflow does not attempt to reproduce an interrupted training trajectory.
+
+### Checks
+
+```bash
+uv run src/hw1_imitation/train.py --help
+uv run python -m unittest discover -s tests -v
+```
+
+Tests cover policy round trips and further training on CPU with mocked rollout
+evaluation and W&B services. They do not exercise GPU training or remote uploads.

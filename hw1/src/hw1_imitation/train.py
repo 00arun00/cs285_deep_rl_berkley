@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -10,11 +11,13 @@ from typing import Any
 import numpy as np
 import torch
 import tyro
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, Dataset, random_split
 from tqdm import tqdm
 
 import wandb
+from hw1_imitation.checkpoint import load_policy
 from hw1_imitation.data import (
+    Episode,
     EpisodeChunkDataset,
     Normalizer,
     download_pusht,
@@ -31,40 +34,42 @@ from hw1_imitation.model import BasePolicy, PolicyConfig, PolicyType, build_poli
 LOGDIR_PREFIX = "exp"
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class TrainConfig:
-    # The path to download the Push-T dataset to.
-    data_dir: Path = Path("data")
+    # Policy initialization.
+    # A loaded policy supplies its own architecture and normalizer.
+    init_from: Path | None = None
 
-    # The policy type -- either MSE or flow.
+    # Model architecture — used only when init_from is None.
     policy_type: PolicyType = "mse"
-    # The number of denoising steps to use for the flow policy (has no effect for the MSE policy).
-    flow_num_steps: int = 10
-
-    # The action chunk size.
+    hidden_dims: tuple[int, ...] = (256, 256, 256)
     chunk_size: int = 8
-    pad_action_chunk_with_last_action: bool = True
-    batch_size: int = 128
 
+    # Dataset and sample preparation.
+    data_dir: Path = Path("data")
+    data_split_seed: int = 42
+    pad_action_chunk_with_last_action: bool = True
+
+    # Training — applies to both fresh and loaded policies.
+    seed: int = 42
+    num_epochs: int = 400
+    batch_size: int = 128
     lr: float = 3e-4
     weight_decay: float = 0.0
 
-    hidden_dims: tuple[int, ...] = (256, 256, 256)
-    # The number of epochs to train for.
-    num_epochs: int = 400
-    # How often to run evaluation, measured in training steps.
+    # Validation and rollout evaluation, measured in training steps.
+    validation_interval: int = 100
     eval_interval: int = 10_000
+
+    # Rollout inference and video recording.
+    # flow_num_steps is ignored by MSE policies.
+    flow_num_steps: int = 10
     num_video_episodes: int = 5
     video_size: tuple[int, int] = (256, 256)
-    # How often to log training metrics, measured in training steps.
+
+    # Training metrics and experiment tracking.
     log_interval: int = 100
-    validation_interval: int = 100
-    # Random seed.
-    seed: int = 42
-    split_seed: int = 42
-    # WandB project name.
     wandb_project: str = "cs285-hw1-imitation-learning"
-    # Experiment name suffix for logging and WandB.
     exp_name: str | None = None
 
     def __post_init__(self):
@@ -75,6 +80,7 @@ class TrainConfig:
             "log_interval",
             "validation_interval",
             "eval_interval",
+            "flow_num_steps",
         ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
@@ -104,6 +110,7 @@ def parse_train_config(
 
 
 def set_seed(seed: int) -> None:
+    random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -115,6 +122,43 @@ def config_to_dict(config: TrainConfig) -> dict[str, Any]:
         if isinstance(value, Path):
             data[key] = str(value)
     return data
+
+
+def build_loaders(
+    config: TrainConfig,
+    train_episodes: Dataset[Episode],
+    validation_episodes: Dataset[Episode],
+    normalizer: Normalizer,
+    *,
+    chunk_size: int,
+) -> tuple[DataLoader, DataLoader]:
+    train_dataset = EpisodeChunkDataset(
+        episodes=train_episodes,
+        chunk_length=chunk_size,
+        normalizer=normalizer,
+        pad_action_chunk=config.pad_action_chunk_with_last_action,
+    )
+    validation_dataset = EpisodeChunkDataset(
+        episodes=validation_episodes,
+        chunk_length=chunk_size,
+        normalizer=normalizer,
+        pad_action_chunk=config.pad_action_chunk_with_last_action,
+    )
+
+    train_loader = DataLoader(
+        dataset=train_dataset,
+        batch_size=config.batch_size,
+        shuffle=True,
+        drop_last=True,
+    )
+    validation_loader = DataLoader(
+        dataset=validation_dataset,
+        batch_size=config.batch_size,
+        shuffle=False,
+        drop_last=False,
+    )
+
+    return train_loader, validation_loader
 
 
 def train_step(
@@ -147,57 +191,44 @@ def run_training(config: TrainConfig) -> None:
     train_episodes_subset, validation_episodes_subset = random_split(
         dataset=episodes_dataset,
         lengths=[0.8, 0.2],
-        generator=torch.Generator().manual_seed(config.split_seed),
+        generator=torch.Generator().manual_seed(config.data_split_seed),
     )
 
-    normalizer = Normalizer.from_episodes_data(train_episodes_subset)
+    if config.init_from is None:
+        normalizer = Normalizer.from_episodes_data(episodes=train_episodes_subset)
 
-    train_dataset = EpisodeChunkDataset(
-        episodes=train_episodes_subset,
-        chunk_length=config.chunk_size,
+        model = build_policy(
+            PolicyConfig(
+                policy_type=config.policy_type,
+                state_dim=normalizer.state_dim,
+                action_dim=normalizer.action_dim,
+                chunk_size=config.chunk_size,
+                hidden_dims=config.hidden_dims,
+            )
+        ).to(device=device)
+
+    else:
+        model, normalizer, _ = load_policy(path=config.init_from, device=device)
+
+    train_loader, validation_loader = build_loaders(
+        config=config,
+        train_episodes=train_episodes_subset,
+        validation_episodes=validation_episodes_subset,
         normalizer=normalizer,
-        pad_action_chunk=config.pad_action_chunk_with_last_action,
-    )
-
-    validation_dataset = EpisodeChunkDataset(
-        episodes=validation_episodes_subset,
-        chunk_length=config.chunk_size,
-        normalizer=normalizer,
-        pad_action_chunk=config.pad_action_chunk_with_last_action,
-    )
-
-    train_loader = DataLoader(
-        dataset=train_dataset,
-        batch_size=config.batch_size,
-        shuffle=True,
-        drop_last=True,
-    )
-    validation_loader = DataLoader(
-        dataset=validation_dataset,
-        batch_size=config.batch_size,
-        shuffle=False,
-        drop_last=False,
+        chunk_size=model.chunk_size,
     )
 
     if len(train_loader) == 0:
-        raise ValueError("No training batches; reduce batch_size or check the dataset.")
-
-    model = build_policy(
-        PolicyConfig(
-            policy_type=config.policy_type,
-            state_dim=train_dataset.state_dim,
-            action_dim=train_dataset.action_dim,
-            chunk_size=config.chunk_size,
-            hidden_dims=config.hidden_dims,
+        raise ValueError(
+            "No training batches; reduces batch_size or check the dataset."
         )
-    ).to(device)
 
-    # define optimizer.
     optimizer = torch.optim.AdamW(
         params=model.parameters(),
         lr=config.lr,
         weight_decay=config.weight_decay,
     )
+    global_step = 0
 
     # Setup logging
     exp_name = f"seed_{config.seed}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -208,7 +239,6 @@ def run_training(config: TrainConfig) -> None:
     log_dir = Path(LOGDIR_PREFIX) / exp_name
     log_dir.mkdir(parents=True, exist_ok=False)
 
-    global_step = 0
     total_steps = config.num_epochs * len(train_loader)
     loss_sum = 0.0
     window_examples_count = 0
@@ -220,9 +250,12 @@ def run_training(config: TrainConfig) -> None:
         "eval": "—",
     }
 
+    wandb_run_config = config_to_dict(config)
+    wandb_run_config["model_config"] = asdict(model.config)
+
     with wandb.init(
         project=config.wandb_project,
-        config=config_to_dict(config),
+        config=wandb_run_config,
         name=exp_name,
         dir=str(log_dir),
     ) as run:
@@ -316,7 +349,7 @@ def run_training(config: TrainConfig) -> None:
                             model=model,
                             normalizer=normalizer,
                             device=device,
-                            chunk_size=config.chunk_size,
+                            chunk_size=model.chunk_size,
                             video_size=config.video_size,
                             num_video_episodes=config.num_video_episodes,
                             flow_num_steps=config.flow_num_steps,
