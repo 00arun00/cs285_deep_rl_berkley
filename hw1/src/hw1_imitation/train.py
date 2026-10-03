@@ -139,8 +139,6 @@ def run_training(config: TrainConfig) -> None:
     if device is None or not torch.accelerator.is_available():
         device = torch.device("cpu")
 
-    print(f"Using device: {device}")
-
     zarr_path = download_pusht(config.data_dir)
     episodes_dataset = load_episodes_dataset(zarr_path=zarr_path)
 
@@ -213,6 +211,13 @@ def run_training(config: TrainConfig) -> None:
     loss_sum = 0.0
     window_examples_count = 0
 
+    display_metrics = {
+        "epoch": f"1/{config.num_epochs}",
+        "loss": "—",
+        "val": "—",
+        "eval": "—",
+    }
+
     with wandb.init(
         project=config.wandb_project,
         config=config_to_dict(config),
@@ -221,88 +226,124 @@ def run_training(config: TrainConfig) -> None:
     ) as run:
         logger = ExperimentLogger(log_dir, run=run)
 
-        for epoch in tqdm(range(config.num_epochs)):
-            for state, action_chunk in train_loader:
-                loss = train_step(
-                    model=model,
-                    optimizer=optimizer,
-                    state=state.to(device),
-                    action_chunk=action_chunk.to(device),
-                )
-                global_step += 1
-
-                # compute_loss() returns a batch mean. Weight it by the
-                # number of examples before combining it with other batches.
-
-                batch_examples = state.shape[0]
-                loss_sum += loss.item() * batch_examples
-                window_examples_count += batch_examples
-
-                training_complete = global_step == total_steps
-                eval_due = global_step % config.eval_interval == 0 or training_complete
-                log_due = global_step % config.log_interval == 0 or training_complete
-                validation_due = (
-                    global_step % config.validation_interval == 0 or training_complete
-                )
-
-                if log_due:
-                    mean_loss = loss_sum / window_examples_count
-
-                    logger.log_train(
-                        global_step=global_step,
-                        epoch=epoch,
-                        loss_window_mean=mean_loss,
-                        window_examples_count=window_examples_count,
-                    )
-
-                    tqdm.write(
-                        f"step={global_step}/{total_steps} "
-                        f"loss_window_mean={mean_loss:.6f}"
-                    )
-
-                    loss_sum = 0.0
-                    window_examples_count = 0
-
-                if validation_due:
-                    validation_result = compute_validation_loss(
+        with tqdm(
+            total=total_steps,
+            desc="Train",
+            unit="step",
+            position=0,
+            leave=True,
+            dynamic_ncols=True,
+            mininterval=0.5,
+            miniters=1,
+            disable=None,
+            postfix=display_metrics,
+        ) as progress:
+            for epoch in range(config.num_epochs):
+                display_metrics["epoch"] = f"{epoch + 1}/{config.num_epochs}"
+                progress.set_postfix(display_metrics, refresh=False)
+                for state, action_chunk in train_loader:
+                    loss = train_step(
                         model=model,
-                        loader=validation_loader,
-                        device=device,
+                        optimizer=optimizer,
+                        state=state.to(device),
+                        action_chunk=action_chunk.to(device),
                     )
-                    logger.log_validation(
-                        global_step=global_step,
-                        loss_mean=validation_result.loss_mean,
-                        examples_count=validation_result.examples_count,
+                    global_step += 1
+
+                    # compute_loss() returns a batch mean. Weight it by the
+                    # number of examples before combining it with other batches.
+
+                    batch_examples = state.shape[0]
+                    loss_sum += loss.item() * batch_examples
+                    window_examples_count += batch_examples
+
+                    training_complete = global_step == total_steps
+                    eval_due = (
+                        global_step % config.eval_interval == 0 or training_complete
+                    )
+                    log_due = (
+                        global_step % config.log_interval == 0 or training_complete
+                    )
+                    validation_due = (
+                        global_step % config.validation_interval == 0
+                        or training_complete
                     )
 
-                if eval_due:
-                    video_dir = None
-                    if config.num_video_episodes > 0:
-                        video_dir = log_dir / "videos" / f"step_{global_step:08d}"
-                        video_dir.mkdir(parents=True, exist_ok=False)
+                    if log_due:
+                        mean_loss = loss_sum / window_examples_count
 
-                    result = evaluate_policy(
-                        model=model,
-                        normalizer=normalizer,
-                        device=device,
-                        chunk_size=config.chunk_size,
-                        video_size=config.video_size,
-                        num_video_episodes=config.num_video_episodes,
-                        flow_num_steps=config.flow_num_steps,
-                        video_dir=video_dir,
-                    )
+                        logger.log_train(
+                            global_step=global_step,
+                            epoch=epoch,
+                            loss_window_mean=mean_loss,
+                            window_examples_count=window_examples_count,
+                        )
 
-                    logger.log_eval(
-                        global_step=global_step,
-                        mean_reward=result.mean_reward,
-                        num_episodes=result.num_episodes,
-                        video_paths=result.video_paths,
-                    )
+                        display_metrics["loss"] = f"{mean_loss:.4g}"
+                        progress.set_postfix(display_metrics, refresh=False)
 
-                    log_checkpoint_artifact(
-                        model=model,
-                        step=global_step,
-                    )
+                        loss_sum = 0.0
+                        window_examples_count = 0
+
+                    # Advance after the optimizer step; tqdm throttles redraws.
+                    progress.update(1)
+
+                    if validation_due:
+                        validation_result = compute_validation_loss(
+                            model=model,
+                            loader=validation_loader,
+                            device=device,
+                        )
+                        logger.log_validation(
+                            global_step=global_step,
+                            loss_mean=validation_result.loss_mean,
+                            examples_count=validation_result.examples_count,
+                        )
+
+                        display_metrics["val"] = f"{validation_result.loss_mean:.4g}"
+                        progress.set_postfix(display_metrics, refresh=False)
+
+                    if eval_due:
+                        progress.set_description_str("Evaluating")
+                        video_dir = None
+                        if config.num_video_episodes > 0:
+                            video_dir = log_dir / "videos" / f"step_{global_step:08d}"
+                            video_dir.mkdir(parents=True, exist_ok=False)
+
+                        result = evaluate_policy(
+                            model=model,
+                            normalizer=normalizer,
+                            device=device,
+                            chunk_size=config.chunk_size,
+                            video_size=config.video_size,
+                            num_video_episodes=config.num_video_episodes,
+                            flow_num_steps=config.flow_num_steps,
+                            video_dir=video_dir,
+                            show_progress=not progress.disable,
+                            progress_position=1,
+                        )
+
+                        logger.log_eval(
+                            global_step=global_step,
+                            mean_reward=result.mean_reward,
+                            num_episodes=result.num_episodes,
+                            video_paths=result.video_paths,
+                        )
+
+                        display_metrics["eval"] = (
+                            f"{result.mean_reward:.3f}@{global_step}"
+                        )
+                        progress.set_postfix(display_metrics, refresh=False)
+                        progress.set_description_str("Saving")
+
+                        log_checkpoint_artifact(
+                            model=model,
+                            step=global_step,
+                        )
+
+                        progress.set_description_str("Train")
+
+            progress.set_description_str("Done")
 
 
 def main() -> None:

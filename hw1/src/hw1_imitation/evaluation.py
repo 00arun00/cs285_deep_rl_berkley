@@ -12,6 +12,7 @@ import numpy as np
 import torch
 from PIL import Image
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 import wandb
 from hw1_imitation.data import Normalizer
@@ -71,7 +72,10 @@ def compute_validation_loss(
     loader: DataLoader,
     *,
     device: torch.device,
+    show_progress: bool = False,
+    progress_position: int = 0,
 ) -> ValidationResults:
+    """Compute example-weighted loss with an optional temporary batch bar."""
     was_training = model.training
     model.eval()
 
@@ -79,18 +83,36 @@ def compute_validation_loss(
     total_examples = 0
 
     try:
-        for states, action_chunks in loader:
-            states = states.to(device)
-            action_chunks = action_chunks.to(device)
+        with tqdm(
+            total=len(loader),
+            desc="Validate",
+            unit="batch",
+            position=progress_position,
+            leave=False,
+            dynamic_ncols=True,
+            mininterval=0.5,
+            miniters=1,
+            disable=None if show_progress else True,
+            postfix={"loss": "—"},
+        ) as progress:
+            for states, action_chunks in loader:
+                states = states.to(device)
+                action_chunks = action_chunks.to(device)
 
-            loss = model.compute_loss(
-                state=states,
-                action_chunk=action_chunks,
-            )
+                loss = model.compute_loss(
+                    state=states,
+                    action_chunk=action_chunks,
+                )
 
-            batch_size = states.shape[0]
-            total_loss += loss.item() * batch_size
-            total_examples += batch_size
+                batch_size = states.shape[0]
+                total_loss += loss.item() * batch_size
+                total_examples += batch_size
+
+                progress.set_postfix(
+                    {"loss": f"{total_loss / total_examples:.4g}"},
+                    refresh=False,
+                )
+                progress.update(1)
 
         if total_examples == 0:
             raise ValueError("validation loader produced no examples")
@@ -114,6 +136,8 @@ def evaluate_policy(
     *,
     video_dir: Path | None = None,
     num_eval_episodes: int = NUM_EVAL_EPISODES,
+    show_progress: bool = False,
+    progress_position: int = 0,
 ) -> EvaluationResults:
     """Run policy rollouts and return scores for Push-T state observations.
 
@@ -138,6 +162,8 @@ def evaluate_policy(
         flow_num_steps: Sampling steps for flow policies.
         video_dir: Existing directory required when recording videos.
         num_eval_episodes: Positive number of rollout episodes.
+        show_progress: Show a temporary bar on an interactive terminal.
+        progress_position: Terminal row assigned to the progress bar.
 
     Invalid configuration raises ValueError or NotADirectoryError.
     Environment, filesystem, and encoding errors propagate.
@@ -181,6 +207,21 @@ def evaluate_policy(
 
         action_low = action_space.low
         action_high = action_space.high
+
+        progress = resources.enter_context(
+            tqdm(
+                total=num_eval_episodes,
+                desc="Evaluate",
+                unit="episode",
+                position=progress_position,
+                leave=False,
+                dynamic_ncols=True,
+                mininterval=0.5,
+                miniters=1,
+                disable=None if show_progress else True,
+                postfix={"score": "—"},
+            )
+        )
 
         for episode_index in range(num_eval_episodes):
             obs, _ = env.reset(seed=episode_index)
@@ -268,6 +309,12 @@ def evaluate_policy(
             # Reached only after the rollout and writer clouser succeeded.
             if video_path is not None:
                 video_paths.append(video_path)
+
+            progress.set_postfix(
+                {"score": f"{float(np.mean(rewards)):.3f}"},
+                refresh=False,
+            )
+            progress.update(1)
 
     return EvaluationResults(
         mean_reward=float(np.mean(rewards)),
