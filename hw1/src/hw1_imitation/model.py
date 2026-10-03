@@ -34,10 +34,24 @@ class BasePolicy(nn.Module, metaclass=abc.ABCMeta):
         """Generate a chunk of actions with shape (batch, chunk_size, action_dim)."""
 
 
+class SimpleMLP(nn.Sequential):
+    """Helper module to construct a simple MLP"""
+
+    def __init__(
+        self, input_dim: int, hidden_dims: tuple[int, ...], output_dim: int
+    ) -> None:
+        dims = [input_dim] + list(hidden_dims) + [output_dim]
+        layers = []
+        for idx in range(len(dims) - 1):
+            layers.append(nn.Linear(in_features=dims[idx], out_features=dims[idx + 1]))
+            if idx < len(dims) - 2:
+                layers.append(nn.ReLU())
+        super().__init__(*layers)
+
+
 class MSEPolicy(BasePolicy):
     """Predicts action chunks with an MSE loss."""
 
-    ### TODO: IMPLEMENT MSEPolicy HERE ###
     def __init__(
         self,
         state_dim: int,
@@ -46,13 +60,19 @@ class MSEPolicy(BasePolicy):
         hidden_dims: tuple[int, ...] = (128, 128),
     ) -> None:
         super().__init__(state_dim, action_dim, chunk_size)
+        self.model = SimpleMLP(
+            input_dim=state_dim,
+            hidden_dims=hidden_dims,
+            output_dim=action_dim * chunk_size,
+        )
 
     def compute_loss(
         self,
         state: torch.Tensor,
         action_chunk: torch.Tensor,
     ) -> torch.Tensor:
-        raise NotImplementedError
+        target = action_chunk.flatten(start_dim=1)
+        return nn.functional.mse_loss(input=self.model(state), target=target)
 
     def sample_actions(
         self,
@@ -60,7 +80,8 @@ class MSEPolicy(BasePolicy):
         *,
         num_steps: int = 10,
     ) -> torch.Tensor:
-        raise NotImplementedError
+        predict = self.model(state)
+        return predict.reshape(-1, self.chunk_size, self.action_dim)
 
 
 class FlowMatchingPolicy(BasePolicy):
