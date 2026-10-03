@@ -20,6 +20,12 @@ class CheckpointTests(unittest.TestCase):
         local = train.parse_train_config([])
         self.assertEqual(local.data_dir, Path("data"))
         self.assertIsNone(local.init_from)
+        self.assertEqual(local.checkpoint_top_k, 3)
+        self.assertEqual(
+            train.parse_train_config(["--checkpoint-top-k", "0"]).checkpoint_top_k, 0
+        )
+        with self.assertRaisesRegex(ValueError, "checkpoint_top_k"):
+            train.TrainConfig(checkpoint_top_k=-1)
 
         defaults = train.TrainConfig(data_dir=Path("/vol/data"))
         parsed = train.parse_train_config(
@@ -202,7 +208,18 @@ class CheckpointTests(unittest.TestCase):
                     steps += 1
                     return loss
 
-                def save(model, step, *, normalizer, flow_num_steps):
+                def save(
+                    model,
+                    step,
+                    *,
+                    normalizer,
+                    flow_num_steps,
+                    mean_reward,
+                    top_k,
+                    checkpoints,
+                ):
+                    self.assertEqual(mean_reward, 0.5)
+                    self.assertEqual(top_k, config.checkpoint_top_k)
                     save_policy(
                         target, model, normalizer, flow_num_steps=flow_num_steps
                     )
