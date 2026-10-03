@@ -138,7 +138,7 @@ class EpisodesDataset(Dataset[Episode]):
         return self.episodes[idx]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Normalizer:
     """Feature-wise normalizer for states and actions."""
 
@@ -146,6 +146,26 @@ class Normalizer:
     state_std: np.ndarray
     action_mean: np.ndarray
     action_std: np.ndarray
+
+    def __post_init__(self) -> None:
+        self._validate_statistics()
+
+    def normalize_state(self, state: np.ndarray) -> np.ndarray:
+        return (state - self.state_mean) / self.state_std
+
+    def normalize_action(self, action: np.ndarray) -> np.ndarray:
+        return (action - self.action_mean) / self.action_std
+
+    def denormalize_action(self, action: np.ndarray) -> np.ndarray:
+        return action * self.action_std + self.action_mean
+
+    @property
+    def state_dim(self):
+        return self.state_mean.shape[0]
+
+    @property
+    def action_dim(self):
+        return self.action_mean.shape[0]
 
     @staticmethod
     def _safe_std(std: np.ndarray, eps: float = 1e-6) -> np.ndarray:
@@ -177,14 +197,33 @@ class Normalizer:
         actions = np.concatenate(actions, axis=0)
         return cls.from_packed_data(states=states, actions=actions)
 
-    def normalize_state(self, state: np.ndarray) -> np.ndarray:
-        return (state - self.state_mean) / self.state_std
+    def state_dict(self) -> dict[str, torch.Tensor]:
+        """Return independent CPU tensors for the checkpoint's explicit schema."""
+        self._validate_statistics()
+        return {
+            "state_mean": torch.from_numpy(self.state_mean.copy()),
+            "state_std": torch.from_numpy(self.state_std.copy()),
+            "action_mean": torch.from_numpy(self.action_mean.copy()),
+            "action_std": torch.from_numpy(self.action_std.copy()),
+        }
 
-    def normalize_action(self, action: np.ndarray) -> np.ndarray:
-        return (action - self.action_mean) / self.action_std
+    @classmethod
+    def from_state_dict(cls, state: dict[str, torch.Tensor]) -> "Normalizer":
+        """Restore validated statistics without sharing checkpoint storage.
 
-    def denormalize_action(self, action: np.ndarray) -> np.ndarray:
-        return action * self.action_std + self.action_mean
+        These four keys are part of the checkpoint format. Changes to
+        this schema must be coordinated with the outer checkpoint version.
+        """
+
+        def to_array(name: str) -> np.ndarray:
+            return state[name].detach().cpu().numpy().copy()
+
+        return cls(
+            state_mean=to_array("state_mean"),
+            state_std=to_array("state_std"),
+            action_mean=to_array("action_mean"),
+            action_std=to_array("action_std"),
+        )
 
     def validate_dimensions(
         self,
@@ -204,6 +243,18 @@ class Normalizer:
                 raise ValueError(
                     f"{name} must have shape {expected}, got {values.shape}"
                 )
+
+    def _validate_statistics(self) -> None:
+        for name, mean, std in (
+            ("state", self.state_mean, self.state_std),
+            ("action", self.action_mean, self.action_std),
+        ):
+            if mean.ndim != 1 or mean.size == 0 or std.shape != mean.shape:
+                raise ValueError(f"{name} statistics must be matching nonempty vectors")
+            if not np.isfinite(mean).all():
+                raise ValueError(f"Invalid normalization statistics: {name}_mean")
+            if not np.isfinite(std).all() or (std <= 0).any():
+                raise ValueError(f"Invalid normalization statistics: {name}_std")
 
 
 def _get_episodes_from_packed_data(
@@ -447,9 +498,7 @@ class EpisodeChunkDataset(ConcatDataset[tuple[torch.Tensor, torch.Tensor]]):
         super().__init__(children)
 
         if len(self) == 0:
-            raise ValueError(
-                "no valid chunks: reduce chunk_length or enable padding"
-            )
+            raise ValueError("no valid chunks: reduce chunk_length or enable padding")
 
     @property
     def state_dim(self) -> int:

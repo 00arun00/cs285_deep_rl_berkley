@@ -3,24 +3,60 @@
 from __future__ import annotations
 
 import abc
+from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
 import torch
 from torch import nn
 
+PolicyType: TypeAlias = Literal["mse", "flow"]
+
+
+@dataclass(frozen=True)
+class PolicyConfig:
+    """Architecture needed to reconstruct a policy.
+
+    chunk_size is the prediction horizon: the number of actions produced
+    by one policy prediction.
+
+    Training settings and inference settings, such as learning rate and
+    flow integration steps, belong outside this configuration.
+    """
+
+    policy_type: PolicyType
+    state_dim: int
+    action_dim: int
+    chunk_size: int
+    hidden_dims: tuple[int, ...] = (128, 128)
+
 
 class BasePolicy(nn.Module, metaclass=abc.ABCMeta):
-    """Base class for action chunking policies."""
+    """Base class for action-chunking policies.
 
-    def __init__(self, state_dim: int, action_dim: int, chunk_size: int) -> None:
+    Architecture lives in config; learned parameters live in state_dict().
+    """
+
+    def __init__(self, config: PolicyConfig) -> None:
         super().__init__()
-        self.state_dim = state_dim
-        self.action_dim = action_dim
-        self.chunk_size = chunk_size
+        self.config = config
+
+    @property
+    def state_dim(self) -> int:
+        return self.config.state_dim
+
+    @property
+    def action_dim(self) -> int:
+        return self.config.action_dim
+
+    @property
+    def chunk_size(self) -> int:
+        return self.config.chunk_size
 
     @abc.abstractmethod
     def compute_loss(
-        self, state: torch.Tensor, action_chunk: torch.Tensor
+        self,
+        state: torch.Tensor,
+        action_chunk: torch.Tensor,
     ) -> torch.Tensor:
         """Compute training loss for a batch."""
 
@@ -29,9 +65,13 @@ class BasePolicy(nn.Module, metaclass=abc.ABCMeta):
         self,
         state: torch.Tensor,
         *,
-        num_steps: int = 10,  # only applicable for flow policy
+        num_steps: int = 10,
     ) -> torch.Tensor:
-        """Generate a chunk of actions with shape (batch, chunk_size, action_dim)."""
+        """Return actions shaped (batch, chunk_size, action_dim).
+
+        num_steps controls integration for flow policies and is ignored
+        by the MSE policy.
+        """
 
 
 class SimpleMLP(nn.Sequential):
@@ -42,28 +82,33 @@ class SimpleMLP(nn.Sequential):
     ) -> None:
         dims = [input_dim] + list(hidden_dims) + [output_dim]
         layers = []
+
         for idx in range(len(dims) - 1):
-            layers.append(nn.Linear(in_features=dims[idx], out_features=dims[idx + 1]))
+            layers.append(
+                nn.Linear(
+                    in_features=dims[idx],
+                    out_features=dims[idx + 1],
+                )
+            )
             if idx < len(dims) - 2:
                 layers.append(nn.ReLU())
+
         super().__init__(*layers)
 
 
 class MSEPolicy(BasePolicy):
-    """Predicts action chunks with an MSE loss."""
+    """Predict action chunks directly, trained with MSE loss."""
 
-    def __init__(
-        self,
-        state_dim: int,
-        action_dim: int,
-        chunk_size: int,
-        hidden_dims: tuple[int, ...] = (128, 128),
-    ) -> None:
-        super().__init__(state_dim, action_dim, chunk_size)
+    def __init__(self, config: PolicyConfig) -> None:
+        if config.policy_type != "mse":
+            raise ValueError("MSEPolicy requires policy_type='mse'")
+
+        super().__init__(config)
+
         self.model = SimpleMLP(
-            input_dim=state_dim,
-            hidden_dims=hidden_dims,
-            output_dim=action_dim * chunk_size,
+            input_dim=config.state_dim,
+            hidden_dims=config.hidden_dims,
+            output_dim=config.action_dim * config.chunk_size,
         )
 
     def compute_loss(
@@ -72,7 +117,10 @@ class MSEPolicy(BasePolicy):
         action_chunk: torch.Tensor,
     ) -> torch.Tensor:
         target = action_chunk.flatten(start_dim=1)
-        return nn.functional.mse_loss(input=self.model(state), target=target)
+        return nn.functional.mse_loss(
+            input=self.model(state),
+            target=target,
+        )
 
     def sample_actions(
         self,
@@ -81,26 +129,29 @@ class MSEPolicy(BasePolicy):
         num_steps: int = 10,
     ) -> torch.Tensor:
         predict = self.model(state)
-        return predict.reshape(-1, self.chunk_size, self.action_dim)
+        return predict.reshape(
+            -1,
+            self.chunk_size,
+            self.action_dim,
+        )
 
 
 class FlowMatchingPolicy(BasePolicy):
-    """Predicts action chunks with a flow matching loss."""
+    """Predict action chunks by integrating a learned velocity field."""
 
-    ### TODO: IMPLEMENT FlowMatchingPolicy HERE ###
-    def __init__(
-        self,
-        state_dim: int,
-        action_dim: int,
-        chunk_size: int,
-        hidden_dims: tuple[int, ...] = (128, 128),
-    ) -> None:
-        super().__init__(state_dim, action_dim, chunk_size)
-        input_dim = state_dim + action_dim * chunk_size + 1
-        output_dim = action_dim * chunk_size
+    def __init__(self, config: PolicyConfig) -> None:
+        if config.policy_type != "flow":
+            raise ValueError("FlowMatchingPolicy requires policy_type='flow'")
+
+        super().__init__(config)
+
+        # Input: observation, flattened action chunk, and time.
+        input_dim = config.state_dim + config.action_dim * config.chunk_size + 1
+        output_dim = config.action_dim * config.chunk_size
+
         self.model = SimpleMLP(
             input_dim=input_dim,
-            hidden_dims=hidden_dims,
+            hidden_dims=config.hidden_dims,
             output_dim=output_dim,
         )
 
@@ -113,7 +164,7 @@ class FlowMatchingPolicy(BasePolicy):
         model_input = torch.concat(
             tensors=(state, interpolated_action_chunk, tau),
             dim=1,
-        ) # B x [state_dim + chunk_size * action_dim + 1]
+        )
         return self.model(model_input)
 
     def compute_loss(
@@ -121,32 +172,32 @@ class FlowMatchingPolicy(BasePolicy):
         state: torch.Tensor,
         action_chunk: torch.Tensor,
     ) -> torch.Tensor:
-        flat_action_chunk = action_chunk.flatten(start_dim=1)  # B x chunk_size*2
+        # Shape: (batch, chunk_size * action_dim).
+        flat_action_chunk = action_chunk.flatten(start_dim=1)
 
         batch_size, flat_action_chunk_dim = flat_action_chunk.shape
         device = action_chunk.device
         dtype = action_chunk.dtype
+
         noise_sample = torch.randn(
             size=(batch_size, flat_action_chunk_dim),
             device=device,
             dtype=dtype,
-        )  # B x chunk_size * action_dim
-
+        )
         tau_sample = torch.rand(
             size=(batch_size, 1),
             device=device,
             dtype=dtype,
-        )  # B x 1
+        )
 
         interpolated_action_chunk = (
             tau_sample * flat_action_chunk + (1 - tau_sample) * noise_sample
-        )  # B x chunk_size * action_dim
+        )
 
         model_input = torch.concat(
             tensors=(state, interpolated_action_chunk, tau_sample),
             dim=1,
-        )  # B x [state_dim + chunk_size * action_dim + 1]
-
+        )
         target_vector = flat_action_chunk - noise_sample
 
         return nn.functional.mse_loss(
@@ -161,18 +212,10 @@ class FlowMatchingPolicy(BasePolicy):
         *,
         num_steps: int = 10,
     ) -> torch.Tensor:
-        """At inference time,
-        - we sample initial noise A(t,0) ∼ N (0, I)
-        - integrate the
+        """Integrate from Gaussian noise to an action chunk.
 
-            ODE d(A(t,τ))
-                ---------   = vθ(ot, At,τ , τ )
-                    dτ
-            from: τ = 0 to τ = 1.
-
-        The simplest integration method is Euler integration, which is given by the following update
-            rule:
-                At,τ+ 1/n = At,τ + 1/n · vθ(ot, At,τ , τ ),
+        Uses num_steps Euler updates over time [0, 1].
+        The step count is an inference setting, not an architecture field.
         """
         if state.ndim != 2 or state.shape[1] != self.state_dim:
             raise ValueError(
@@ -185,22 +228,20 @@ class FlowMatchingPolicy(BasePolicy):
         if num_steps <= 0:
             raise ValueError("num_steps must be positive")
 
-        device = state.device
-        dtype = state.dtype
         batch_size = state.shape[0]
 
-        sampled_guassian_noise = torch.randn(
+        interpolated_action_chunk = torch.randn(
             size=(batch_size, self.action_dim * self.chunk_size),
-            device=device,
-            dtype=dtype,
+            device=state.device,
+            dtype=state.dtype,
         )
 
-        interpolated_action_chunk = sampled_guassian_noise
         dt = 1 / num_steps
         for step in range(num_steps):
-            # One time value per batch element: (B, 1).
-            tau = state.new_full(size=(batch_size, 1), fill_value=step * dt)
-            # Predicted velocity: (B, chunk_size * action_dim).
+            tau = state.new_full(
+                size=(batch_size, 1),
+                fill_value=step * dt,
+            )
             predicted_velocity = self._forward(
                 state=state,
                 interpolated_action_chunk=interpolated_action_chunk,
@@ -211,33 +252,18 @@ class FlowMatchingPolicy(BasePolicy):
             )
 
         return interpolated_action_chunk.reshape(
-            shape=(batch_size, self.chunk_size, self.action_dim)
+            batch_size,
+            self.chunk_size,
+            self.action_dim,
         )
 
 
-PolicyType: TypeAlias = Literal["mse", "flow"]
+def build_policy(config: PolicyConfig) -> BasePolicy:
+    """Construct a policy from its architecture configuration."""
+    if config.policy_type == "mse":
+        return MSEPolicy(config)
 
+    if config.policy_type == "flow":
+        return FlowMatchingPolicy(config)
 
-def build_policy(
-    policy_type: PolicyType,
-    *,
-    state_dim: int,
-    action_dim: int,
-    chunk_size: int,
-    hidden_dims: tuple[int, ...] = (128, 128),
-) -> BasePolicy:
-    if policy_type == "mse":
-        return MSEPolicy(
-            state_dim=state_dim,
-            action_dim=action_dim,
-            chunk_size=chunk_size,
-            hidden_dims=hidden_dims,
-        )
-    if policy_type == "flow":
-        return FlowMatchingPolicy(
-            state_dim=state_dim,
-            action_dim=action_dim,
-            chunk_size=chunk_size,
-            hidden_dims=hidden_dims,
-        )
-    raise ValueError(f"Unknown policy type: {policy_type}")
+    raise ValueError(f"Unknown policy type: {config.policy_type}")
