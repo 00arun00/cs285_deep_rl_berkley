@@ -26,7 +26,7 @@ from hw1_imitation.evaluation import (
     log_checkpoint_artifact,
 )
 from hw1_imitation.logging_utils import ExperimentLogger
-from hw1_imitation.model import BasePolicy, PolicyType, build_policy
+from hw1_imitation.model import BasePolicy, PolicyConfig, PolicyType, build_policy
 
 LOGDIR_PREFIX = "exp"
 
@@ -183,11 +183,13 @@ def run_training(config: TrainConfig) -> None:
         raise ValueError("No training batches; reduce batch_size or check the dataset.")
 
     model = build_policy(
-        config.policy_type,
-        state_dim=train_dataset.state_dim,
-        action_dim=train_dataset.action_dim,
-        chunk_size=config.chunk_size,
-        hidden_dims=config.hidden_dims,
+        PolicyConfig(
+            policy_type=config.policy_type,
+            state_dim=train_dataset.state_dim,
+            action_dim=train_dataset.action_dim,
+            chunk_size=config.chunk_size,
+            hidden_dims=config.hidden_dims,
+        )
     ).to(device)
 
     # define optimizer.
