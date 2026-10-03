@@ -69,8 +69,7 @@ env = {
     cpu=DEFAULT_CPU,
 )
 def train_remote(*args: str) -> None:
-    defaults = TrainConfig()
-    defaults.data_dir = Path(VOLUME_PATH) / "data"
+    defaults = TrainConfig(data_dir=Path(VOLUME_PATH) / "data")
     config = parse_train_config(
         list(args),
         defaults=defaults,
