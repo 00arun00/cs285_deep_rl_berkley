@@ -1,4 +1,4 @@
-""" "Save and load self-contained Push-T policies.
+"""Save and load self-contained Push-T policies.
 
 A policy checkpoint contains:
 - Architecture configuration.

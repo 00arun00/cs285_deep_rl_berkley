@@ -227,9 +227,7 @@ def run_training(config: TrainConfig) -> None:
     )
 
     if len(train_loader) == 0:
-        raise ValueError(
-            "No training batches; reduces batch_size or check the dataset."
-        )
+        raise ValueError("No training batches; reduce batch_size or check the dataset.")
 
     optimizer = torch.optim.AdamW(
         params=model.parameters(),
