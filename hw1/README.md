@@ -71,7 +71,9 @@ best K checkpoints by rollout mean reward, plus latest, locally and in W&B.
 Ties favor the earlier checkpoint; zero keeps only latest. W&B aliases identify
 `best` (when K > 0) and `latest`. Pruning waits for upload completion and requires
 online W&B logging. Cleanup failures are logged and retried at the next save,
-so failed cleanup can temporarily leave extra versions. W&B cache files and
+so failed cleanup can temporarily leave extra versions. Pending cleanup is reported
+at the end of training; retries do not persist across runs. Offline W&B runs are
+rejected before training begins. W&B cache files and
 evaluation videos are not covered by this policy.
 
 The policy checkpoint format (version 1) contains:
