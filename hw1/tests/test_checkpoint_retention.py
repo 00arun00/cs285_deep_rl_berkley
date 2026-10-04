@@ -46,7 +46,6 @@ class CheckpointRetentionTests(unittest.TestCase):
 
         self.run.log_artifact.side_effect = log_artifact
         for patcher in (
-            patch.object(evaluation.wandb, "run", self.run),
             patch.object(
                 evaluation.wandb, "Artifact", side_effect=lambda **kw: Mock(**kw)
             ),
@@ -56,9 +55,11 @@ class CheckpointRetentionTests(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def save(self, step, score, top_k=3):
-        return evaluation.log_checkpoint_artifact(
+        return evaluation.save_checkpoint_and_retain(
             Mock(),
             step,
+            checkpoint_dir=self.root / "checkpoints",
+            run=self.run,
             normalizer=Mock(),
             flow_num_steps=10,
             mean_reward=score,
@@ -127,6 +128,38 @@ class CheckpointRetentionTests(unittest.TestCase):
         self.assertEqual(self.local_steps(), {3})
         self.assertEqual(set(self.checkpoints), {3})
         self.artifacts[1].delete.assert_called_once_with()
+
+    def test_local_only_retention_does_not_use_global_wandb_run(self):
+        for top_k, expected in ((0, {5}), (3, {1, 2, 3, 5})):
+            with self.subTest(top_k=top_k):
+                self.checkpoints = {}
+                checkpoint_dir = self.root / f"local-{top_k}"
+                with patch.object(evaluation.wandb, "run", self.run):
+                    for step, score in enumerate([0.9, 0.8, 0.7, 0.1, 0.7], 1):
+                        pending = evaluation.save_checkpoint_and_retain(
+                            Mock(),
+                            step,
+                            checkpoint_dir=checkpoint_dir,
+                            normalizer=Mock(),
+                            flow_num_steps=10,
+                            mean_reward=score,
+                            top_k=top_k,
+                            checkpoints=self.checkpoints,
+                        )
+                        self.assertEqual(pending, set())
+                self.assertEqual(set(self.checkpoints), expected)
+                self.assertEqual(
+                    {
+                        int(p.stem.removeprefix("policy_step_"))
+                        for p in checkpoint_dir.glob("*.pt")
+                    },
+                    expected,
+                )
+                self.assertTrue(
+                    all(r.artifact is None for r in self.checkpoints.values())
+                )
+        self.run.log_artifact.assert_not_called()
+        evaluation.wandb.Artifact.assert_not_called()
 
     def test_invalid_inputs_do_not_save(self):
         for score in (float("nan"), float("inf")):

@@ -84,7 +84,7 @@ def open_video_writer(
 class ExperimentLogger:
     """Write scalar metrics locally and mirror them to an optional W&B run.
 
-    Each logging call appends one CSV row.
+    Each logging call appends one CSV row when log_csv is enabled.
     If a W&B run is supplied, the same scalar values are also submitted to the run.
 
     CSV writes happen prior to W&B submissions.
@@ -117,18 +117,22 @@ class ExperimentLogger:
         self,
         directory: Path,
         run: wandb.Run | None = None,
+        *,
+        log_csv: bool = True,
     ) -> None:
         """Create metric files in an existing experiment directory.
 
         Args:
-            directory: Caller-owned experiment directory. Neither metric
-                CSV may already exist.
-            run: Active W&B run, or None for local recording only.
+            directory: Caller-owned experiment directory. When CSV logging is
+                enabled, metric CSV files must not already exist.
+            run: Active W&B run, or None to disable W&B reporting.
+            log_csv: Create and append local metric CSV files.
         The caller remains responsible for finishing the run.
 
         Initialization errors propagate and may leave partially created
         files. Existing records are never intentionally overwritten.
         """
+        self.log_csv = log_csv
         self.directory = directory.resolve()
         if not self.directory.is_dir():
             raise NotADirectoryError(self.directory)
@@ -137,13 +141,14 @@ class ExperimentLogger:
         self.eval_path = self.directory / "eval.csv"
         self.validation_path = self.directory / "validation.csv"
 
-        for path, fields in (
-            (self.train_path, self.TRAIN_FIELDS),
-            (self.validation_path, self.VALIDATION_FIELDS),
-            (self.eval_path, self.EVAL_FIELDS),
-        ):
-            with path.open("x", encoding="utf-8", newline="") as file:
-                csv.DictWriter(file, fieldnames=fields).writeheader()
+        if self.log_csv:
+            for path, fields in (
+                (self.train_path, self.TRAIN_FIELDS),
+                (self.validation_path, self.VALIDATION_FIELDS),
+                (self.eval_path, self.EVAL_FIELDS),
+            ):
+                with path.open("x", encoding="utf-8", newline="") as file:
+                    csv.DictWriter(file, fieldnames=fields).writeheader()
 
         self.run = run
 
@@ -153,13 +158,16 @@ class ExperimentLogger:
             self.run.define_metric("validation/*", step_metric="global_step")
             self.run.define_metric("eval/*", step_metric="global_step")
 
-    @staticmethod
     def _append_row(
+        self,
         path: Path,
         fields: tuple[str, ...],
         row: Mapping[str, RecordValue],
     ) -> None:
-        """Append a row to csv"""
+        """Append a CSV row when local metric logging is enabled."""
+        if not self.log_csv:
+            return
+
         with path.open("a", encoding="utf-8", newline="") as file:
             csv.DictWriter(file, fieldnames=fields).writerow(row)
 
@@ -251,6 +259,9 @@ class ExperimentLogger:
         video_paths: Sequence[Path] = (),
     ) -> None:
         """Record evaluation metrics and completed local video references."""
+
+        if not self.log_csv and self.run is None:
+            return
 
         resolved_paths = tuple(path.resolve() for path in video_paths)
         relative_paths: list[str] = []

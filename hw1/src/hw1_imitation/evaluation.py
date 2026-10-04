@@ -54,7 +54,7 @@ def resize_frame(frame: np.ndarray, size: tuple[int, int]) -> np.ndarray:
 class CheckpointRecord:
     score: float
     path: Path
-    artifact: wandb.Artifact
+    artifact: wandb.Artifact | None = None
 
 
 def prune_checkpoints(
@@ -76,7 +76,8 @@ def prune_checkpoints(
 
         try:
             # Preserve W&B's protection for user-assigned aliases.
-            record.artifact.delete()
+            if record.artifact is not None:
+                record.artifact.delete()
         except Exception:
             logging.exception("Could not delete W&B checkpoint at step %s", step)
             pending.add(step)
@@ -88,7 +89,7 @@ def prune_checkpoints(
     return pending
 
 
-def log_checkpoint_artifact(
+def save_checkpoint_and_retain(
     model: BasePolicy,
     step: int,
     *,
@@ -97,28 +98,27 @@ def log_checkpoint_artifact(
     mean_reward: float,
     top_k: int,
     checkpoints: dict[int, CheckpointRecord],
+    checkpoint_dir: Path,
+    run: wandb.Run | None = None,
 ) -> set[int]:
     """Save an evaluated policy and retain the best K plus latest.
 
     Call once per evaluation with increasing steps and a fixed top_k.
     Higher rewards win; ties favor earlier steps. Zero keeps only latest.
-    Online W&B logging is required.
+    A supplied W&B run must be online; omit it for local-only saving.
 
-    Upload completion is confirmed before pruning. Cleanup failures are
+    When uploading, completion is confirmed before pruning. Cleanup failures are
     logged and retried at later saves; save/upload errors propagate.
     Returns pending cleanup steps. Retry state is not persisted across runs.
     """
-    run = wandb.run
-    if run is None:
-        raise RuntimeError("wandb.init did not create a run.")
-    if run.offline:
+    if run is not None and run.offline:
         raise ValueError("Remote checkpoint retention requires online W&B.")
     if top_k < 0:
         raise ValueError("top_k must be nonnegative")
     if not math.isfinite(mean_reward):
         raise ValueError("Checkpoint mean_reward must be finite")
 
-    checkpoint_path = Path(run.dir) / "checkpoints" / f"policy_step_{step}.pt"
+    checkpoint_path = checkpoint_dir / f"policy_step_{step}.pt"
     save_policy(
         path=checkpoint_path,
         model=model,
@@ -134,23 +134,25 @@ def log_checkpoint_artifact(
     )
     keep_steps = set(ranked_steps[:top_k]) | {step}
 
-    artifact = wandb.Artifact(
-        name=f"policy-checkpoint-{run.id}",
-        type="model",
-        metadata={
-            "step": step,
-            "mean_reward": mean_reward,
-            "format_version": CHECKPOINT_VERSION,
-        },
-    )
-    artifact.add_file(checkpoint_path.as_posix(), name=checkpoint_path.name)
+    uploaded = None
+    if run is not None:
+        artifact = wandb.Artifact(
+            name=f"policy-checkpoint-{run.id}",
+            type="model",
+            metadata={
+                "step": step,
+                "mean_reward": mean_reward,
+                "format_version": CHECKPOINT_VERSION,
+            },
+        )
+        artifact.add_file(checkpoint_path.as_posix(), name=checkpoint_path.name)
 
-    # Logging moves these aliases; it does not remove older versions.
-    aliases = ["latest"]
-    if top_k > 0 and ranked_steps[0] == step:
-        aliases.append("best")
-    uploaded = run.log_artifact(artifact, aliases=aliases)
-    uploaded.wait()
+        # Logging moves these aliases; it does not remove older versions.
+        aliases = ["latest"]
+        if top_k > 0 and ranked_steps[0] == step:
+            aliases.append("best")
+        uploaded = run.log_artifact(artifact, aliases=aliases)
+        uploaded.wait()
     checkpoints[step] = CheckpointRecord(mean_reward, checkpoint_path, uploaded)
 
     return prune_checkpoints(checkpoints, keep_steps)

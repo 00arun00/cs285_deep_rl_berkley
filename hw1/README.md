@@ -30,7 +30,7 @@ This should work out of the box with the provided starter code.
 
 ## Weights & Biases (wandb) login
 
-These assignments use [Weights & Biases (WandB)](https://wandb.ai) for experiment tracking. WandB is a tool for logging and visualizing machine learning experiments. It is free for academic use. Before running a training script, you will need to log in to WandB using your API key.
+These assignments use [Weights & Biases (WandB)](https://wandb.ai) for experiment tracking. WandB is a tool for logging and visualizing machine learning experiments. It is free for academic use. For W&B logging (enabled by default), log in using your API key. Local-only runs with `--no-log-wandb` do not require W&B login.
 
 ```bash
 uv run wandb login
@@ -64,17 +64,34 @@ uv run modal volume get hw1-imitation-volume exp/<experiment_name>
 
 ## Reusing policy checkpoints
 
-After each rollout evaluation, including the final training step, the driver
-saves `policy_step_<step>.pt` under the W&B run's `checkpoints/` directory and
-uploads it as a model artifact. `--checkpoint-top-k` (default: 3) retains the
-best K checkpoints by rollout mean reward, plus latest, locally and in W&B.
-Ties favor the earlier checkpoint; zero keeps only latest. W&B aliases identify
-`best` (when K > 0) and `latest`. Pruning waits for upload completion and requires
-online W&B logging. Cleanup failures are logged and retried at the next save,
-so failed cleanup can temporarily leave extra versions. Pending cleanup is reported
-at the end of training; retries do not persist across runs. Offline W&B runs are
-rejected before training begins. W&B cache files and
-evaluation videos are not covered by this policy.
+CSV metrics, W&B reporting, and checkpoint saving are enabled by default and
+can be disabled independently:
+
+```bash
+uv run src/hw1_imitation/train.py --no-log-wandb
+uv run src/hw1_imitation/train.py --no-log-csv --no-log-wandb --no-save-checkpoints
+```
+
+`--no-log-csv` prevents metric CSV creation and writes. `--no-log-wandb` skips
+W&B initialization, metrics, video uploads, and checkpoint artifacts.
+`--no-save-checkpoints` skips both local checkpoints and their W&B artifacts.
+Progress, warnings, validation, and rollout evaluation remain enabled. Videos
+are still recorded unless `--num-video-episodes 0` is supplied. The run directory
+is still created even when all three outputs are disabled.
+
+When checkpoint saving is enabled, each rollout evaluation (including the final
+training step) saves `exp/<experiment_name>/checkpoints/policy_step_<step>.pt`.
+`--checkpoint-top-k` (default: 3) retains the best K by rollout mean reward plus
+latest. Ties favor earlier checkpoints; zero keeps only latest. This setting has
+no effect when checkpoint saving is disabled.
+
+With W&B enabled, checkpoints are also uploaded as model artifacts, with `best`
+(when K > 0) and `latest` aliases. Pruning waits for upload completion. Local-only
+runs apply the same retention without W&B. Cleanup failures are logged and retried
+at the next save; pending cleanup is reported at the end of training. Retry state
+does not persist across runs. Offline W&B runs remain unsupported; use
+`--no-log-wandb` for local-only runs. W&B cache files and evaluation videos are
+not covered by checkpoint retention.
 
 The policy checkpoint format (version 1) contains:
 

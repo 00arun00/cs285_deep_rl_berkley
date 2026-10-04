@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import random
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -28,7 +29,7 @@ from hw1_imitation.evaluation import (
     CheckpointRecord,
     compute_validation_loss,
     evaluate_policy,
-    log_checkpoint_artifact,
+    save_checkpoint_and_retain,
 )
 from hw1_imitation.logging_utils import ExperimentLogger
 from hw1_imitation.model import BasePolicy, PolicyConfig, PolicyType, build_policy
@@ -64,6 +65,7 @@ class TrainConfig:
     eval_interval: int = 10_000
 
     # Retain the best K rollout checkpoints, plus latest (0 = latest only).
+    save_checkpoints: bool = True
     checkpoint_top_k: int = 3
 
     # Rollout inference and video recording.
@@ -73,6 +75,8 @@ class TrainConfig:
     video_size: tuple[int, int] = (256, 256)
 
     # Training metrics and experiment tracking.
+    log_csv: bool = True
+    log_wandb: bool = True
     log_interval: int = 100
     wandb_project: str = "cs285-hw1-imitation-learning"
     exp_name: str | None = None
@@ -259,16 +263,25 @@ def run_training(config: TrainConfig) -> None:
     wandb_run_config = config_to_dict(config)
     wandb_run_config["model_config"] = asdict(model.config)
 
-    with wandb.init(
-        project=config.wandb_project,
-        config=wandb_run_config,
-        name=exp_name,
-        dir=str(log_dir),
-    ) as run:
-        if run.offline:
-            raise ValueError("Checkpoint retention requires online W&B.")
+    tracking_context = (
+        wandb.init(
+            project=config.wandb_project,
+            config=wandb_run_config,
+            name=exp_name,
+            dir=str(log_dir),
+        )
+        if config.log_wandb
+        else nullcontext(None)
+    )
 
-        logger = ExperimentLogger(log_dir, run=run)
+    with tracking_context as run:
+        if run is not None and run.offline:
+            raise ValueError(
+                "Offline W&B is not supported by this training driver. "
+                "Use --no-log-wandb for local-only runs."
+            )
+
+        logger = ExperimentLogger(log_dir, run=run, log_csv=config.log_csv)
         checkpoints: dict[int, CheckpointRecord] = {}
         pending_cleanup: set[int] = set()
 
@@ -380,17 +393,20 @@ def run_training(config: TrainConfig) -> None:
                             f"{result.mean_reward:.3f}@{global_step}"
                         )
                         progress.set_postfix(display_metrics, refresh=False)
-                        progress.set_description_str("Saving")
+                        if config.save_checkpoints:
+                            progress.set_description_str("Saving")
 
-                        pending_cleanup = log_checkpoint_artifact(
-                            model=model,
-                            step=global_step,
-                            mean_reward=result.mean_reward,
-                            top_k=config.checkpoint_top_k,
-                            checkpoints=checkpoints,
-                            normalizer=normalizer,
-                            flow_num_steps=config.flow_num_steps,
-                        )
+                            pending_cleanup = save_checkpoint_and_retain(
+                                model=model,
+                                step=global_step,
+                                checkpoint_dir=log_dir / "checkpoints",
+                                run=run,
+                                mean_reward=result.mean_reward,
+                                top_k=config.checkpoint_top_k,
+                                checkpoints=checkpoints,
+                                normalizer=normalizer,
+                                flow_num_steps=config.flow_num_steps,
+                            )
 
                         progress.set_description_str("Train")
 
