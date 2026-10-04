@@ -50,6 +50,44 @@ def resize_frame(frame: np.ndarray, size: tuple[int, int]) -> np.ndarray:
     return np.asarray(resized)
 
 
+@dataclass(frozen=True, slots=True)
+class CheckpointRecord:
+    score: float
+    path: Path
+    artifact: wandb.Artifact
+
+
+def prune_checkpoints(
+    checkpoints: dict[int, CheckpointRecord],
+    keep_steps: set[int],
+) -> set[int]:
+    """Delete obsolete checkpoints; return steps whose cleanup failed."""
+    pending: set[int] = set()
+    for step, record in list(checkpoints.items()):
+        if step in keep_steps:
+            continue
+
+        try:
+            record.path.unlink(missing_ok=True)
+        except OSError:
+            logging.exception("Could not delete local checkpoint at step %s", step)
+            pending.add(step)
+            continue
+
+        try:
+            # Preserve W&B's protection for user-assigned aliases.
+            record.artifact.delete()
+        except Exception:
+            logging.exception("Could not delete W&B checkpoint at step %s", step)
+            pending.add(step)
+            continue
+
+        # Failed deletions stay tracked for the next pruning pass.
+        del checkpoints[step]
+
+    return pending
+
+
 def log_checkpoint_artifact(
     model: BasePolicy,
     step: int,
@@ -58,16 +96,17 @@ def log_checkpoint_artifact(
     flow_num_steps: int,
     mean_reward: float,
     top_k: int,
-    checkpoints: dict[int, tuple[float, Path, wandb.Artifact]],
-) -> None:
+    checkpoints: dict[int, CheckpointRecord],
+) -> set[int]:
     """Save an evaluated policy and retain the best K plus latest.
 
-    The caller owns the per-run mapping from step to score, local path, and
-    uploaded artifact. Higher rewards win; ties favor earlier steps.
-    Zero keeps only latest. Online W&B logging is required.
+    Call once per evaluation with increasing steps and a fixed top_k.
+    Higher rewards win; ties favor earlier steps. Zero keeps only latest.
+    Online W&B logging is required.
 
     Upload completion is confirmed before pruning. Cleanup failures are
-    logged and retried at the next checkpoint; save/upload errors propagate.
+    logged and retried at later saves; save/upload errors propagate.
+    Returns pending cleanup steps. Retry state is not persisted across runs.
     """
     run = wandb.run
     if run is None:
@@ -88,7 +127,7 @@ def log_checkpoint_artifact(
     )
 
     # Use the same retention decision for local files and remote versions.
-    scores = {saved_step: score for saved_step, (score, _, _) in checkpoints.items()}
+    scores = {saved_step: record.score for saved_step, record in checkpoints.items()}
     scores[step] = mean_reward
     ranked_steps = sorted(
         scores, key=lambda saved_step: (-scores[saved_step], saved_step)
@@ -112,29 +151,9 @@ def log_checkpoint_artifact(
         aliases.append("best")
     uploaded = run.log_artifact(artifact, aliases=aliases)
     uploaded.wait()
-    checkpoints[step] = (mean_reward, checkpoint_path, uploaded)
+    checkpoints[step] = CheckpointRecord(mean_reward, checkpoint_path, uploaded)
 
-    for saved_step, (_, path, old_artifact) in list(checkpoints.items()):
-        if saved_step in keep_steps:
-            continue
-
-        # Prune local files even when remote cleanup is temporarily unavailable.
-        try:
-            path.unlink(missing_ok=True)
-        except OSError:
-            logging.exception(
-                "Could not delete local checkpoint at step %s", saved_step
-            )
-            continue
-
-        try:
-            # Default deletion protects versions with user-assigned aliases.
-            old_artifact.delete()
-        except Exception:
-            logging.exception("Could not delete W&B checkpoint at step %s", saved_step)
-            continue
-
-        del checkpoints[saved_step]
+    return prune_checkpoints(checkpoints, keep_steps)
 
 
 @torch.no_grad()

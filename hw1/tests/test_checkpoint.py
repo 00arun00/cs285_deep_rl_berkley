@@ -178,7 +178,7 @@ class CheckpointTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
 
-            def run(name, config, expected_model=None):
+            def run(name, config, expected_model=None, pending_cleanup=None):
                 target = root / f"{name}.pt"
                 steps = 0
 
@@ -223,6 +223,7 @@ class CheckpointTests(unittest.TestCase):
                     save_policy(
                         target, model, normalizer, flow_num_steps=flow_num_steps
                     )
+                    return pending_cleanup or set()
 
                 with (
                     patch.object(train, "LOGDIR_PREFIX", str(root / name)),
@@ -233,7 +234,7 @@ class CheckpointTests(unittest.TestCase):
                         "current_accelerator",
                         return_value=None,
                     ),
-                    patch.object(train.wandb, "init"),
+                    patch.object(train.wandb, "init") as wandb_init,
                     patch.object(train, "ExperimentLogger") as logger,
                     patch.object(
                         train,
@@ -244,8 +245,19 @@ class CheckpointTests(unittest.TestCase):
                         train, "log_checkpoint_artifact", side_effect=save
                     ) as save_artifact,
                     patch.object(train, "train_step", side_effect=step),
+                    patch.object(train.logging, "warning") as warning,
                 ):
+                    wandb_init.return_value.__enter__.return_value.offline = False
                     train.run_training(config)
+
+                if pending_cleanup:
+                    warning.assert_called_once_with(
+                        "Training finished with checkpoint cleanup pending for steps %s. "
+                        "Extra local files or W&B artifacts may remain.",
+                        sorted(pending_cleanup),
+                    )
+                else:
+                    warning.assert_not_called()
 
                 # Four training episodes, each containing six padded samples.
                 expected_steps = config.num_epochs * (24 // config.batch_size)
@@ -318,6 +330,7 @@ class CheckpointTests(unittest.TestCase):
                             flow_num_steps=4,
                         ),
                         expected_model=original,
+                        pending_cleanup={1},
                     )
                     self.assertEqual(trained.config, original.config)
                     for name, value in original_stats.state_dict().items():

@@ -29,9 +29,9 @@ class CheckpointRetentionTests(unittest.TestCase):
 
             def wait():
                 # No existing retained file may disappear before upload succeeds.
-                for _, path, _ in self.checkpoints.values():
-                    if path.exists():
-                        self.assertEqual(path.read_bytes(), b"checkpoint")
+                for record in self.checkpoints.values():
+                    if record.path.exists():
+                        self.assertEqual(record.path.read_bytes(), b"checkpoint")
                 if self.upload_error:
                     raise self.upload_error
                 for alias in aliases:
@@ -56,7 +56,7 @@ class CheckpointRetentionTests(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def save(self, step, score, top_k=3):
-        evaluation.log_checkpoint_artifact(
+        return evaluation.log_checkpoint_artifact(
             Mock(),
             step,
             normalizer=Mock(),
@@ -105,13 +105,28 @@ class CheckpointRetentionTests(unittest.TestCase):
         self.save(1, 1.0, top_k=0)
         self.artifacts[1].delete.side_effect = RuntimeError("network unavailable")
         with self.assertLogs(level="ERROR"):
-            self.save(2, 0.1, top_k=0)
+            self.assertEqual(self.save(2, 0.1, top_k=0), {1})
         self.assertEqual(set(self.checkpoints), {1, 2})
         self.assertEqual(self.local_steps(), {2})
         self.artifacts[1].delete.side_effect = None
-        self.save(3, 0.2, top_k=0)
+        self.assertEqual(self.save(3, 0.2, top_k=0), set())
         self.assertEqual(set(self.checkpoints), {3})
         self.assertEqual(self.artifacts[1].delete.call_count, 2)
+
+    def test_failed_local_cleanup_retries_before_remote_deletion(self):
+        self.save(1, 1.0, top_k=0)
+        with (
+            patch.object(Path, "unlink", side_effect=OSError("permission denied")),
+            self.assertLogs(level="ERROR"),
+        ):
+            self.assertEqual(self.save(2, 0.1, top_k=0), {1})
+        self.assertEqual(self.local_steps(), {1, 2})
+        self.artifacts[1].delete.assert_not_called()
+
+        self.assertEqual(self.save(3, 0.2, top_k=0), set())
+        self.assertEqual(self.local_steps(), {3})
+        self.assertEqual(set(self.checkpoints), {3})
+        self.artifacts[1].delete.assert_called_once_with()
 
     def test_invalid_inputs_do_not_save(self):
         for score in (float("nan"), float("inf")):

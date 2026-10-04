@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import random
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -24,6 +25,7 @@ from hw1_imitation.data import (
     load_episodes_dataset,
 )
 from hw1_imitation.evaluation import (
+    CheckpointRecord,
     compute_validation_loss,
     evaluate_policy,
     log_checkpoint_artifact,
@@ -265,8 +267,12 @@ def run_training(config: TrainConfig) -> None:
         name=exp_name,
         dir=str(log_dir),
     ) as run:
+        if run.offline:
+            raise ValueError("Checkpoint retention requires online W&B.")
+
         logger = ExperimentLogger(log_dir, run=run)
-        checkpoints: dict[int, tuple[float, Path, wandb.Artifact]] = {}
+        checkpoints: dict[int, CheckpointRecord] = {}
+        pending_cleanup: set[int] = set()
 
         with tqdm(
             total=total_steps,
@@ -378,7 +384,7 @@ def run_training(config: TrainConfig) -> None:
                         progress.set_postfix(display_metrics, refresh=False)
                         progress.set_description_str("Saving")
 
-                        log_checkpoint_artifact(
+                        pending_cleanup = log_checkpoint_artifact(
                             model=model,
                             step=global_step,
                             mean_reward=result.mean_reward,
@@ -391,6 +397,13 @@ def run_training(config: TrainConfig) -> None:
                         progress.set_description_str("Train")
 
             progress.set_description_str("Done")
+
+        if pending_cleanup:
+            logging.warning(
+                "Training finished with checkpoint cleanup pending for steps %s. "
+                "Extra local files or W&B artifacts may remain.",
+                sorted(pending_cleanup),
+            )
 
 
 def main() -> None:
