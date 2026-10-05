@@ -212,6 +212,8 @@ class CheckpointTests(unittest.TestCase):
                     model,
                     step,
                     *,
+                    checkpoint_dir,
+                    run,
                     normalizer,
                     flow_num_steps,
                     mean_reward,
@@ -242,7 +244,7 @@ class CheckpointTests(unittest.TestCase):
                         return_value=EvaluationResults(0.5, 1, ()),
                     ) as evaluate,
                     patch.object(
-                        train, "log_checkpoint_artifact", side_effect=save
+                        train, "save_checkpoint_and_retain", side_effect=save
                     ) as save_artifact,
                     patch.object(train, "train_step", side_effect=step),
                     patch.object(train.logging, "warning") as warning,
