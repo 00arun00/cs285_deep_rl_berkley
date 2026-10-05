@@ -13,6 +13,10 @@ from typing import Any
 import numpy as np
 import torch
 import tyro
+from rich import box
+from rich.console import Console
+from rich.table import Table
+from rich.text import Text
 from torch.utils.data import DataLoader, Dataset, random_split
 from tqdm import tqdm
 
@@ -26,6 +30,7 @@ from hw1_imitation.data import (
     load_episodes_dataset,
 )
 from hw1_imitation.evaluation import (
+    NUM_EVAL_EPISODES,
     CheckpointRecord,
     compute_validation_loss,
     evaluate_policy,
@@ -81,6 +86,9 @@ class TrainConfig:
     wandb_project: str = "cs285-hw1-imitation-learning"
     exp_name: str | None = None
 
+    # Print the effective configuration and dataset/model facts before training.
+    show_summary: bool = True
+
     def __post_init__(self):
         for name in (
             "num_epochs",
@@ -104,6 +112,146 @@ class TrainConfig:
             width, height = self.video_size
             if width <= 0 or height <= 0 or width % 2 or height % 2:
                 raise ValueError("Video dimensions must be positive and even")
+
+
+def build_training_summary(
+    config: TrainConfig,
+    *,
+    model: BasePolicy,
+    run_name: str,
+    device: str,
+    output_dir: Path,
+    dataset_path: Path,
+    train_episodes: int,
+    validation_episodes: int,
+    train_samples: int,
+    validation_samples: int,
+    steps_per_epoch: int,
+    num_eval_episodes: int,
+) -> Table:
+    """Format TrainConfig and resolved runtime facts for the startup display."""
+    architecture = model.config
+    table = Table(
+        title="Push-T · Training summary",
+        title_style="bold",
+        title_justify="center",
+        box=box.ROUNDED,
+        show_header=False,
+        padding=(0, 1),
+    )
+    table.add_column("Setting", style="cyan")
+    table.add_column("Value", overflow="fold", ratio=1)
+
+    table.add_row("Run", Text(run_name))
+    table.add_row("Device", Text(device))
+    table.add_row("Output directory", Text(str(output_dir.resolve())))
+    table.add_section()
+
+    initialization = (
+        "initialized from scratch"
+        if config.init_from is None
+        else "loaded weights · fresh optimizer"
+    )
+    table.add_row("Policy", f"{architecture.policy_type.upper()} · {initialization}")
+    if config.init_from is not None:
+        table.add_row("Initial checkpoint", Text(str(config.init_from.resolve())))
+    table.add_row(
+        "Hidden layers",
+        " → ".join(map(str, architecture.hidden_dims)) or "None",
+    )
+    table.add_row(
+        "Observation/action",
+        f"{architecture.state_dim} / {architecture.action_dim} dimensions",
+    )
+    table.add_row("Action chunk", f"{architecture.chunk_size} steps")
+    parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    table.add_row("Parameters", f"{parameters:,} trainable")
+    if architecture.policy_type == "flow":
+        table.add_row("Flow sampling", f"{config.flow_num_steps} steps")
+    table.add_section()
+
+    table.add_row("Dataset", Text(str(dataset_path.resolve())))
+    table.add_row(
+        "Episodes",
+        f"{train_episodes:,} train / {validation_episodes:,} validation",
+    )
+    table.add_row("Training samples", f"{train_samples:,}")
+    table.add_row("Validation samples", f"{validation_samples:,}")
+    table.add_row(
+        "Chunk padding",
+        "Repeat last action"
+        if config.pad_action_chunk_with_last_action
+        else "Disabled · full chunks only",
+    )
+    table.add_row(
+        "Normalization",
+        "Computed from training episodes"
+        if config.init_from is None
+        else "Loaded from checkpoint",
+    )
+    table.add_row(
+        "Seeds", f"Training: {config.seed} · data split: {config.data_split_seed}"
+    )
+    table.add_section()
+
+    table.add_row(
+        "Optimizer",
+        f"AdamW · lr {config.lr:g} · weight decay {config.weight_decay:g}",
+    )
+    table.add_row(
+        "Training budget",
+        f"{config.num_epochs:,} epochs · {config.num_epochs * steps_per_epoch:,} optimizer steps",
+    )
+    table.add_row(
+        "Batch size", f"{config.batch_size:,} · incomplete training batch dropped"
+    )
+    table.add_row("Metric interval", f"Every {config.log_interval:,} steps + final")
+    table.add_row("Validation", f"Every {config.validation_interval:,} steps + final")
+    table.add_row(
+        "Rollout evaluation",
+        f"Every {config.eval_interval:,} steps + final · {num_eval_episodes} episodes",
+    )
+    table.add_section()
+
+    table.add_row(
+        "CSV logging",
+        Text(
+            "Enabled" if config.log_csv else "Disabled",
+            style="green" if config.log_csv else "dim",
+        ),
+    )
+    table.add_row(
+        "W&B",
+        Text(
+            f"Enabled · {config.wandb_project}" if config.log_wandb else "Disabled",
+            style="green" if config.log_wandb else "dim",
+        ),
+    )
+    retention = (
+        f"Best {config.checkpoint_top_k} + latest"
+        if config.checkpoint_top_k
+        else "Latest only"
+    )
+    table.add_row(
+        "Checkpoints",
+        Text(
+            f"{retention} · after each evaluation"
+            if config.save_checkpoints
+            else "Disabled",
+            style=None if config.save_checkpoints else "dim",
+        ),
+    )
+    width, height = config.video_size
+    table.add_row(
+        "Videos",
+        Text(
+            f"{min(config.num_video_episodes, num_eval_episodes)} episodes/evaluation · {width} × {height}"
+            if config.num_video_episodes
+            else "Disabled",
+            style=None if config.num_video_episodes else "dim",
+        ),
+    )
+    return table
 
 
 def parse_train_config(
@@ -284,6 +432,28 @@ def run_training(config: TrainConfig) -> None:
         logger = ExperimentLogger(log_dir, run=run, log_csv=config.log_csv)
         checkpoints: dict[int, CheckpointRecord] = {}
         pending_cleanup: set[int] = set()
+
+        if config.show_summary:
+            model_device = next(model.parameters()).device
+            device_label = str(model_device)
+            if model_device.type == "cuda":
+                device_label += f" · {torch.cuda.get_device_name(model_device)}"
+            Console(stderr=True).print(
+                build_training_summary(
+                    config=config,
+                    model=model,
+                    run_name=exp_name,
+                    device=device_label,
+                    output_dir=log_dir,
+                    dataset_path=zarr_path,
+                    train_episodes=len(train_episodes_subset),
+                    validation_episodes=len(validation_episodes_subset),
+                    train_samples=len(train_loader.dataset),
+                    validation_samples=len(validation_loader.dataset),
+                    steps_per_epoch=len(train_loader),
+                    num_eval_episodes=NUM_EVAL_EPISODES,
+                )
+            )
 
         with tqdm(
             total=total_steps,
