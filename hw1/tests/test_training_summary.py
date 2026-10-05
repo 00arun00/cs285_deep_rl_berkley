@@ -44,7 +44,9 @@ class TrainingSummaryTests(unittest.TestCase):
     def test_default_summary_and_cli(self):
         self.assertTrue(parse_train_config([]).show_summary)
         self.assertFalse(parse_train_config(["--no-show-summary"]).show_summary)
-        rendered = self.render(self.summary())
+        rendered = self.render(
+            self.summary(config=TrainConfig(eval_episodes=5, final_eval_episodes=50))
+        )
         for expected in (
             "Push-T · Training summary",
             "MSE · initialized from scratch",
@@ -55,10 +57,13 @@ class TrainingSummaryTests(unittest.TestCase):
             "64,000 optimizer steps",
             "Computed from training episodes",
             "Best 3 + latest",
-            "100 episodes",
             "[blue]literal[/blue]",
         ):
             self.assertIn(expected, rendered)
+        self.assertRegex(
+            rendered, r"Rollout evaluation\s*│\s*Every 10,000 steps · 5 episodes"
+        )
+        self.assertRegex(rendered, r"Final evaluation\s*│\s*50 episodes")
         self.assertNotIn("Flow sampling", rendered)
         self.assertNotIn("\x1b", rendered)
 
@@ -87,7 +92,7 @@ class TrainingSummaryTests(unittest.TestCase):
         self.assertNotIn("MSE", rendered)
         self.assertNotIn("Computed from training episodes", rendered)
 
-    def test_disabled_outputs_and_video_cap(self):
+    def test_disabled_outputs_and_configured_video_count(self):
         summary = self.summary(
             config=TrainConfig(
                 log_csv=False,

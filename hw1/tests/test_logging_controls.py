@@ -36,14 +36,15 @@ class LoggingControlsTests(unittest.TestCase):
                 for i in range(5)
             )
         )
-        for log_csv, log_wandb, save_checkpoints in itertools.product(
-            (False, True), repeat=3
+        for log_csv, log_wandb, save_checkpoints, show_summary in itertools.product(
+            (False, True), repeat=4
         ):
             with (
                 self.subTest(
                     log_csv=log_csv,
                     log_wandb=log_wandb,
                     save_checkpoints=save_checkpoints,
+                    show_summary=show_summary,
                 ),
                 tempfile.TemporaryDirectory() as directory,
             ):
@@ -52,7 +53,7 @@ class LoggingControlsTests(unittest.TestCase):
                     log_csv=log_csv,
                     log_wandb=log_wandb,
                     save_checkpoints=save_checkpoints,
-                    show_summary=log_csv,
+                    show_summary=show_summary,
                     hidden_dims=(4,),
                     chunk_size=1,
                     num_epochs=1,
@@ -106,6 +107,13 @@ class LoggingControlsTests(unittest.TestCase):
                 if log_wandb:
                     initialize.assert_called_once()
                     self.assertEqual(run.log.call_count, 3)
+                    run.log.assert_any_call(
+                        {
+                            "global_step": 1,
+                            "eval/mean_reward": 0.5,
+                            "eval/num_episodes": 1,
+                        }
+                    )
                 else:
                     initialize.assert_not_called()
                     run.log.assert_not_called()
@@ -117,6 +125,16 @@ class LoggingControlsTests(unittest.TestCase):
                         rows = list(csv.DictReader(file))
                     self.assertEqual(len(rows), 1)
                     self.assertEqual(rows[0]["global_step"], "1")
+                    if path.name == "eval.csv":
+                        self.assertEqual(
+                            rows[0],
+                            {
+                                "global_step": "1",
+                                "mean_reward": "0.5",
+                                "num_episodes": "1",
+                                "video_paths": "[]",
+                            },
+                        )
 
                 checkpoints = list(root.rglob("*.pt"))
                 self.assertEqual(len(checkpoints), int(save_checkpoints))
