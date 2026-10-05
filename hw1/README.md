@@ -62,6 +62,19 @@ Then, you can download the logs and checkpoints to your local machine using a co
 uv run modal volume get hw1-imitation-volume exp/<experiment_name>
 ```
 
+## Evaluation episode counts
+
+Use fewer episodes for periodic rollouts while keeping a full final evaluation:
+
+```bash
+uv run src/hw1_imitation/train.py --eval-episodes 5 --final-eval-episodes 100
+```
+
+Both counts must be positive and default to 100. If a periodic evaluation lands
+on the final training step, only the final evaluation runs, using
+`--final-eval-episodes`. Evaluation intervals, video recording, and checkpoint
+schedules are unchanged. Video count is capped by the rollout episode count.
+
 ## Reusing policy checkpoints
 
 CSV metrics, W&B reporting, and checkpoint saving are enabled by default and

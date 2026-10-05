@@ -32,7 +32,6 @@ class TrainingSummaryTests(unittest.TestCase):
             train_samples=20480,
             validation_samples=5170,
             steps_per_epoch=160,
-            num_eval_episodes=100,
         )
 
     def render(self, summary, width=100):
@@ -110,7 +109,7 @@ class TrainingSummaryTests(unittest.TestCase):
         )
         rendered = self.render(enabled)
         self.assertIn("Latest only", rendered)
-        self.assertIn("100 episodes/evaluation", rendered)
+        self.assertIn("Up to 150 episodes", rendered)
 
     def test_narrow_terminal_wraps_without_losing_values(self):
         summary = self.summary()

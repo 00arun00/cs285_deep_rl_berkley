@@ -30,7 +30,6 @@ from hw1_imitation.data import (
     load_episodes_dataset,
 )
 from hw1_imitation.evaluation import (
-    NUM_EVAL_EPISODES,
     CheckpointRecord,
     compute_validation_loss,
     evaluate_policy,
@@ -68,6 +67,8 @@ class TrainConfig:
     # Validation and rollout evaluation, measured in training steps.
     validation_interval: int = 100
     eval_interval: int = 10_000
+    eval_episodes: int = 100
+    final_eval_episodes: int = 100
 
     # Retain the best K rollout checkpoints, plus latest (0 = latest only).
     save_checkpoints: bool = True
@@ -97,6 +98,8 @@ class TrainConfig:
             "log_interval",
             "validation_interval",
             "eval_interval",
+            "eval_episodes",
+            "final_eval_episodes",
             "flow_num_steps",
         ):
             if getattr(self, name) <= 0:
@@ -127,7 +130,6 @@ def build_training_summary(
     train_samples: int,
     validation_samples: int,
     steps_per_epoch: int,
-    num_eval_episodes: int,
 ) -> Table:
     """Format TrainConfig and resolved runtime facts for the startup display."""
     architecture = model.config
@@ -209,8 +211,9 @@ def build_training_summary(
     table.add_row("Validation", f"Every {config.validation_interval:,} steps + final")
     table.add_row(
         "Rollout evaluation",
-        f"Every {config.eval_interval:,} steps + final · {num_eval_episodes} episodes",
+        f"Every {config.eval_interval:,} steps · {config.eval_episodes} episodes",
     )
+    table.add_row("Final evaluation", f"{config.final_eval_episodes} episodes")
     table.add_section()
 
     table.add_row(
@@ -245,7 +248,7 @@ def build_training_summary(
     table.add_row(
         "Videos",
         Text(
-            f"{min(config.num_video_episodes, num_eval_episodes)} episodes/evaluation · {width} × {height}"
+            f"Up to {config.num_video_episodes} episodes/evaluation · {width} × {height}"
             if config.num_video_episodes
             else "Disabled",
             style=None if config.num_video_episodes else "dim",
@@ -451,7 +454,6 @@ def run_training(config: TrainConfig) -> None:
                     train_samples=len(train_loader.dataset),
                     validation_samples=len(validation_loader.dataset),
                     steps_per_epoch=len(train_loader),
-                    num_eval_episodes=NUM_EVAL_EPISODES,
                 )
             )
 
@@ -546,6 +548,11 @@ def run_training(config: TrainConfig) -> None:
                             chunk_size=model.chunk_size,
                             video_size=config.video_size,
                             num_video_episodes=config.num_video_episodes,
+                            num_eval_episodes=(
+                                config.final_eval_episodes
+                                if training_complete
+                                else config.eval_episodes
+                            ),
                             flow_num_steps=config.flow_num_steps,
                             video_dir=video_dir,
                             show_progress=not progress.disable,
