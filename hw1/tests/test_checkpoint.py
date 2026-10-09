@@ -113,7 +113,10 @@ class CheckpointTests(unittest.TestCase):
                             action_dim=2,
                             chunk_size=2,
                             hidden_dims=(8,),
-                        )
+                        ),
+                        cpu_generator=RandomStreamFactory(42).torch(
+                            StreamId.MODEL_INIT,
+                        ),
                     )
                     normalizer = Normalizer(
                         np.array([1.0, 2.0, 3.0], dtype=np.float32),

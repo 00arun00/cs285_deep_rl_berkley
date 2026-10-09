@@ -7,6 +7,7 @@ import unittest
 from rich.console import Console
 
 from hw1_imitation.model import PolicyConfig, build_policy
+from hw1_imitation.randomness import RandomStreamFactory, StreamId
 from hw1_imitation.train import TrainConfig, build_training_summary, parse_train_config
 
 
@@ -21,7 +22,10 @@ class TrainingSummaryTests(unittest.TestCase):
                     action_dim=2,
                     chunk_size=8,
                     hidden_dims=(256, 256, 256),
-                )
+                ),
+                cpu_generator=RandomStreamFactory(42).torch(
+                    StreamId.MODEL_INIT,
+                ),
             ),
             run_name="seed_42_[blue]literal[/blue]",
             device="cpu",

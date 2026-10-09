@@ -18,7 +18,7 @@ from pathlib import Path
 import torch
 
 from hw1_imitation.data import Normalizer
-from hw1_imitation.model import BasePolicy, PolicyConfig, build_policy
+from hw1_imitation.model import BasePolicy, PolicyConfig, construct_policy
 
 CHECKPOINT_VERSION = 1
 
@@ -90,18 +90,18 @@ def load_policy(
 
     Args:
         path: Checkpoint produced by save_policy().
-        device: Device on which to return the policy. Construction and weight
-            loading happen on CPU before transferring the model to this device.
+        device: Device on which to return the policy. The architecture is
+            constructed on meta, materialized on CPU, and populated with
+            saved weights before transfer.
 
     Returns:
         model: Loaded policy in evaluation mode.
         normalizer: Saved observation/action normalization statistics.
         inference_config: Saved inference defaults.
 
-    Model construction preserves the caller's default CPU RNG state.
+    Model construction and loading do not consume default RNG streams.
     Inference randomness remains caller-owned and is supplied when sampling
-    actions. The temporary RNG scope assumes no concurrent use of the default
-    CPU RNG by other threads.
+    actions.
 
     For further training, construct a new optimizer and call model.train().
     No optimizer state, training position, or saved RNG state is restored.
@@ -135,11 +135,11 @@ def load_policy(
     ):
         raise ValueError("Checkpoint flow_num_steps must be a positive integer")
 
-    # Constructors used here consume the default RNG.
-    # Construct on CPU and restore its RNG state on scope exit.
-    with torch.random.fork_rng(devices=[]), torch.device("cpu"):
-        model = build_policy(policy_config)
-        model.load_state_dict(checkpoint["model_state_dict"], strict=True)
+    with torch.device("meta"):
+        model = construct_policy(policy_config)
+
+    model.to_empty(device="cpu")
+    model.load_state_dict(checkpoint["model_state_dict"], strict=True)
 
     model = model.to(device=device)
     model.eval()

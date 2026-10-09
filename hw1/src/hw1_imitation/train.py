@@ -315,7 +315,6 @@ def parse_train_config(
     )
 
 
-
 def config_to_dict(config: TrainConfig) -> dict[str, Any]:
     data = asdict(config)
     for key, value in data.items():
@@ -420,39 +419,31 @@ def run_training(config: TrainConfig) -> None:
         ),
     )
 
-    # Torch Module constructor used here does not accept a generator,
-    # so construction alters default RNG on the allocation device.
-    # Default RNG state management differs across device backends.
-    # Construct on CPU and move the completed model to the final target device.
-    # This avoids backend-specific initialization code. While doing this we
-    # need to capture RNG, supply new stream, then restore RNG.
-    # NOTE: this does not guarantee identical training results across devices.
-    with torch.random.fork_rng(devices=[]), torch.device("cpu"):
-        torch.set_rng_state(
-            streams.torch(
+    if config.init_from is None:
+        normalizer = Normalizer.from_episodes_data(episodes=train_episodes_subset)
+
+        model = build_policy(
+            PolicyConfig(
+                policy_type=config.policy_type,
+                state_dim=normalizer.state_dim,
+                action_dim=normalizer.action_dim,
+                chunk_size=config.chunk_size,
+                hidden_dims=config.hidden_dims,
+            ),
+            cpu_generator=streams.torch(
                 StreamId.MODEL_INIT,
                 variation=config.model_init_variation,
-            ).get_state()
+                device="cpu",
+            ),
+            target_device=device,
         )
-        if config.init_from is None:
-            normalizer = Normalizer.from_episodes_data(episodes=train_episodes_subset)
 
-            model = build_policy(
-                PolicyConfig(
-                    policy_type=config.policy_type,
-                    state_dim=normalizer.state_dim,
-                    action_dim=normalizer.action_dim,
-                    chunk_size=config.chunk_size,
-                    hidden_dims=config.hidden_dims,
-                )
-            )
+    else:
+        model, normalizer, _ = load_policy(
+            path=config.init_from,
+            device=device,
+        )
 
-        else:
-            # Loading reconstructs modules before replacing the weights.
-            # Isolate the discarded init draws from surrounding RNG.
-            model, normalizer, _ = load_policy(path=config.init_from, device="cpu")
-
-    model = model.to(device=device)
     device = next(model.parameters()).device
 
     # Create fresh for each training run; advance across its batches and epochs.
