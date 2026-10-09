@@ -21,6 +21,7 @@ from hw1_imitation.checkpoint import CHECKPOINT_VERSION, save_policy
 from hw1_imitation.data import Normalizer
 from hw1_imitation.logging_utils import open_video_writer
 from hw1_imitation.model import BasePolicy
+from hw1_imitation.randomness import RandomStreamFactory, StreamId
 
 NUM_EVAL_EPISODES = 100
 
@@ -164,10 +165,20 @@ def compute_validation_loss(
     loader: DataLoader,
     *,
     device: torch.device,
+    generator: torch.Generator,
     show_progress: bool = False,
     progress_position: int = 0,
 ) -> ValidationResults:
-    """Compute example-weighted loss with an optional temporary batch bar."""
+    """Compute example-weighted loss using caller-owned randomness.
+
+    The generator advances across batches and must match the sampling device.
+    To repeat validation noise across checkpoints, the caller should provide
+    a fresh generator with the same identity for each complete validation pass.
+
+    Repeating noise also assumes unchanged batch order and sampling shapes.
+    The model's previous training mode is restored on exit.
+    """
+
     was_training = model.training
     model.eval()
 
@@ -194,6 +205,7 @@ def compute_validation_loss(
                 loss = model.compute_loss(
                     state=states,
                     action_chunk=action_chunks,
+                    generator=generator,
                 )
 
                 batch_size = states.shape[0]
@@ -226,6 +238,9 @@ def evaluate_policy(
     num_video_episodes: int,
     flow_num_steps: int,
     *,
+    streams: RandomStreamFactory,
+    env_variation: int = 0,
+    policy_variation: int = 0,
     video_dir: Path | None = None,
     num_eval_episodes: int = NUM_EVAL_EPISODES,
     show_progress: bool = False,
@@ -233,8 +248,14 @@ def evaluate_policy(
 ) -> EvaluationResults:
     """Run policy rollouts and return scores for Push-T state observations.
 
-    The score is the mean of per-episode maximum rewards. Episodes use
-    reset seeds 0 through num_eval_episodes - 1.
+    The score is the mean of per-episode maximum rewards.
+
+    Each episode index identifies an environment seed and a separate policy
+    generator. Repeated calls with the same root and variations recreate
+    those episode identities.
+
+    The policy generator advances across action chunks within its episode.
+    Environment and policy variations can be changed independently.
 
     Videos are streamed directly to the caller-provided directory.
     A failed recording may leave a partial file, but its path is never
@@ -252,6 +273,9 @@ def evaluate_policy(
         num_video_episodes: Initial episodes to record, capped by the
             evaluation episode count. Use zero to disable recording.
         flow_num_steps: Sampling steps for flow policies.
+        streams: Stateless factory supplying indexed episode randomness.
+        env_variation: Realization of evaluation environment randomness.
+        policy_variation: Realization of evaluation policy randomness.
         video_dir: Existing directory required when recording videos.
         num_eval_episodes: Positive number of rollout episodes.
         show_progress: Show a temporary bar on an interactive terminal.
@@ -316,7 +340,21 @@ def evaluate_policy(
         )
 
         for episode_index in range(num_eval_episodes):
-            obs, _ = env.reset(seed=episode_index)
+            # Give each episode separately indexed environment and policy streams.
+            env_seed = streams.seed(
+                StreamId.EVAL_ENV,
+                variation=env_variation,
+                index=episode_index,
+            )
+
+            policy_generator = streams.torch(
+                StreamId.EVAL_POLICY,
+                variation=policy_variation,
+                index=episode_index,
+                device=device,
+            )
+
+            obs, _ = env.reset(seed=env_seed)
             done = False
             chunk_index = chunk_size
             action_chunk: np.ndarray | None = None
@@ -343,7 +381,9 @@ def evaluate_policy(
                         with torch.no_grad():
                             predicted = (
                                 model.sample_actions(
-                                    state.unsqueeze(0), num_steps=flow_num_steps
+                                    state.unsqueeze(0),
+                                    generator=policy_generator,
+                                    num_steps=flow_num_steps,
                                 )
                                 .cpu()
                                 .numpy()[0]

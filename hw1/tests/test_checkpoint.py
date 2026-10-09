@@ -12,7 +12,8 @@ from hw1_imitation import train
 from hw1_imitation.checkpoint import load_policy, save_policy
 from hw1_imitation.data import Episode, EpisodesDataset, Normalizer
 from hw1_imitation.evaluation import EvaluationResults
-from hw1_imitation.model import PolicyConfig, build_policy
+from hw1_imitation.model import BasePolicy, PolicyConfig, build_policy
+from hw1_imitation.randomness import RandomStreamFactory, StreamId
 
 
 class CheckpointTests(unittest.TestCase):
@@ -36,7 +37,7 @@ class CheckpointTests(unittest.TestCase):
                 "20",
                 "--flow-num-steps",
                 "3",
-                "--data-split-seed",
+                "--data-split-variation",
                 "7",
             ],
             defaults=defaults,
@@ -45,7 +46,7 @@ class CheckpointTests(unittest.TestCase):
         self.assertEqual(parsed.data_dir, defaults.data_dir)
         self.assertEqual(parsed.num_epochs, 20)
         self.assertEqual(parsed.flow_num_steps, 3)
-        self.assertEqual(parsed.data_split_seed, 7)
+        self.assertEqual(parsed.data_split_variation, 7)
         self.assertEqual(defaults.num_epochs, 400)
 
     def test_config_rejects_nonpositive_flow_steps(self):
@@ -144,14 +145,21 @@ class CheckpointTests(unittest.TestCase):
                         )
 
                     raw = np.array([[10.0, 20.0, 30.0]], dtype=np.float32)
+                    streams = RandomStreamFactory(root_seed=123)
 
-                    def predict(policy, norm):
-                        # Flow sampling is stochastic; compare with identical
-                        # inference noise, not restored training RNG state.
-                        torch.manual_seed(123)
+                    def predict(policy: BasePolicy, norm: Normalizer) -> np.ndarray:
+                        """Predict with fresh, reproducible inference noise."""
+                        # Recreate the same stream for each policy so differences
+                        # in flow noise cannot obscure checkpoint preservation.
+                        generator = streams.torch(
+                            StreamId.EVAL_POLICY,
+                            variation=0,
+                            index=0,
+                        )
                         with torch.no_grad():
                             actions = policy.sample_actions(
                                 torch.from_numpy(norm.normalize_state(raw)),
+                                generator=generator,
                                 num_steps=inference["flow_num_steps"],
                             )
                         return norm.denormalize_action(actions.numpy())
@@ -182,7 +190,14 @@ class CheckpointTests(unittest.TestCase):
                 target = root / f"{name}.pt"
                 steps = 0
 
-                def step(model, optimizer, state, action_chunk):
+                def step(
+                    model: BasePolicy,
+                    optimizer: torch.optim.Optimizer,
+                    state: torch.Tensor,
+                    action_chunk: torch.Tensor,
+                    *,
+                    generator: torch.Generator,
+                ) -> torch.Tensor:
                     nonlocal steps
                     if steps == 0:
                         # Both entry paths must start with new optimizer history.
@@ -202,7 +217,15 @@ class CheckpointTests(unittest.TestCase):
                                     atol=0,
                                 )
                     self.assertEqual(action_chunk.shape[1], model.chunk_size)
-                    loss = real_train_step(model, optimizer, state, action_chunk)
+                    # Driver's generator remains unchanged so this wrapper
+                    # preserves the production stream's progression.
+                    loss = real_train_step(
+                        model,
+                        optimizer,
+                        state,
+                        action_chunk,
+                        generator=generator,
+                    )
                     self.assertTrue(torch.isfinite(loss).item())
                     self.assertTrue(model.training)
                     steps += 1
@@ -324,7 +347,7 @@ class CheckpointTests(unittest.TestCase):
                             lr=1e-3,
                             weight_decay=0.01,
                             seed=8,
-                            data_split_seed=9,
+                            data_split_variation=9,
                             log_interval=5,
                             validation_interval=100,
                             eval_interval=100,

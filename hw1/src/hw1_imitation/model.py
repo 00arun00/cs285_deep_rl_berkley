@@ -57,20 +57,27 @@ class BasePolicy(nn.Module, metaclass=abc.ABCMeta):
         self,
         state: torch.Tensor,
         action_chunk: torch.Tensor,
+        *,
+        generator: torch.Generator,
     ) -> torch.Tensor:
-        """Compute training loss for a batch."""
+        """Compute loss using caller-owned randomness.
+
+        Stochastic policies advance generator. Deterministic policies leave
+        it untouched. The generator must match the sampling device.
+        """
 
     @abc.abstractmethod
     def sample_actions(
         self,
         state: torch.Tensor,
         *,
+        generator: torch.Generator,
         num_steps: int = 10,
     ) -> torch.Tensor:
         """Return actions shaped (batch, chunk_size, action_dim).
 
-        num_steps controls integration for flow policies and is ignored
-        by the MSE policy.
+        Stochastic policies advance the caller-owned generator.
+        num_steps controls flow integration; MSE policies ignore it.
         """
 
 
@@ -115,6 +122,8 @@ class MSEPolicy(BasePolicy):
         self,
         state: torch.Tensor,
         action_chunk: torch.Tensor,
+        *,
+        generator: torch.Generator,  # model is deterministic, generator not used.
     ) -> torch.Tensor:
         target = action_chunk.flatten(start_dim=1)
         return nn.functional.mse_loss(
@@ -126,7 +135,8 @@ class MSEPolicy(BasePolicy):
         self,
         state: torch.Tensor,
         *,
-        num_steps: int = 10,
+        generator: torch.Generator,  # model is deterministic, generator not used.
+        num_steps: int = 10,  # not used by the model.
     ) -> torch.Tensor:
         predict = self.model(state)
         return predict.reshape(
@@ -171,6 +181,8 @@ class FlowMatchingPolicy(BasePolicy):
         self,
         state: torch.Tensor,
         action_chunk: torch.Tensor,
+        *,
+        generator: torch.Generator,
     ) -> torch.Tensor:
         # Shape: (batch, chunk_size * action_dim).
         flat_action_chunk = action_chunk.flatten(start_dim=1)
@@ -183,25 +195,29 @@ class FlowMatchingPolicy(BasePolicy):
             size=(batch_size, flat_action_chunk_dim),
             device=device,
             dtype=dtype,
+            generator=generator,
         )
         tau_sample = torch.rand(
             size=(batch_size, 1),
             device=device,
             dtype=dtype,
+            generator=generator,
         )
 
         interpolated_action_chunk = (
             tau_sample * flat_action_chunk + (1 - tau_sample) * noise_sample
         )
 
-        model_input = torch.concat(
-            tensors=(state, interpolated_action_chunk, tau_sample),
-            dim=1,
-        )
         target_vector = flat_action_chunk - noise_sample
 
+        predicted_velocity = self._forward(
+            state=state,
+            interpolated_action_chunk=interpolated_action_chunk,
+            tau=tau_sample,
+        )
+
         return nn.functional.mse_loss(
-            input=self.model(model_input),
+            input=predicted_velocity,
             target=target_vector,
         )
 
@@ -210,12 +226,16 @@ class FlowMatchingPolicy(BasePolicy):
         self,
         state: torch.Tensor,
         *,
+        generator: torch.Generator,
         num_steps: int = 10,
     ) -> torch.Tensor:
         """Integrate from Gaussian noise to an action chunk.
 
         Uses num_steps Euler updates over time [0, 1].
         The step count is an inference setting, not an architecture field.
+
+        The generator must match state.device. The caller should reuse it across
+        action chunks within an episode.
         """
         if state.ndim != 2 or state.shape[1] != self.state_dim:
             raise ValueError(
@@ -234,6 +254,7 @@ class FlowMatchingPolicy(BasePolicy):
             size=(batch_size, self.action_dim * self.chunk_size),
             device=state.device,
             dtype=state.dtype,
+            generator=generator,
         )
 
         dt = 1 / num_steps
