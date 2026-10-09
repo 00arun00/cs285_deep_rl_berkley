@@ -6,7 +6,9 @@ or equivalence across devices and library versions.
 
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 from unittest.mock import patch
 
 import gymnasium as gym
@@ -22,19 +24,17 @@ from hw1_imitation.randomness import RandomStreamFactory, StreamId
 
 def make_policy() -> BasePolicy:
     """Build a small stochastic policy without changing the default RNG."""
-    with torch.random.fork_rng(devices=[]), torch.device("cpu"):
-        torch.set_rng_state(
-            RandomStreamFactory(42).torch(StreamId.MODEL_INIT).get_state()
-        )
-        return build_policy(
-            PolicyConfig(
-                policy_type="flow",
-                state_dim=3,
-                action_dim=2,
-                chunk_size=1,
-                hidden_dims=(4,),
-            )
-        )
+    return build_policy(
+        PolicyConfig(
+            policy_type="flow",
+            state_dim=3,
+            action_dim=2,
+            chunk_size=1,
+            hidden_dims=(4,),
+        ),
+        cpu_generator=RandomStreamFactory(42).torch(StreamId.MODEL_INIT),
+        target_device="cpu",
+    )
 
 
 def make_normalizer() -> Normalizer:
@@ -178,7 +178,172 @@ class RandomStreamTests(unittest.TestCase):
                         method(StreamId.TRAIN_LOSS, **{coordinate: value})
 
 
+class PolicyInitializationTests(unittest.TestCase):
+    def test_concurrent_initialization_matches_isolated_runs(self) -> None:
+        for policy_type in ("mse", "flow"):
+            with self.subTest(policy_type=policy_type):
+                config = PolicyConfig(
+                    policy_type=policy_type,
+                    state_dim=3,
+                    action_dim=2,
+                    chunk_size=1,
+                    hidden_dims=(4,),
+                )
+
+                def build(variation: int) -> BasePolicy:
+                    return build_policy(
+                        config,
+                        cpu_generator=RandomStreamFactory(42).torch(
+                            StreamId.MODEL_INIT,
+                            variation=variation,
+                        ),
+                        target_device="cpu",
+                    )
+
+                before = torch.get_rng_state().clone()
+                expected = [build(variation) for variation in (0, 1)]
+                self.assertTrue(torch.equal(before, torch.get_rng_state()))
+
+                barrier = Barrier(2)
+
+                def concurrent_build(variation: int) -> BasePolicy:
+                    barrier.wait(timeout=10)
+                    return build(variation)
+
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    actual = list(executor.map(concurrent_build, (0, 1)))
+
+                self.assertTrue(torch.equal(before, torch.get_rng_state()))
+
+                for reference, result in zip(expected, actual):
+                    self.assertTrue(result.training)
+                    for name, value in result.state_dict().items():
+                        self.assertEqual(value.device, torch.device("cpu"))
+                        self.assertTrue(torch.isfinite(value).all().item())
+                        torch.testing.assert_close(
+                            value,
+                            reference.state_dict()[name],
+                            rtol=0,
+                            atol=0,
+                        )
+
+                self.assertTrue(
+                    any(
+                        not torch.equal(value, expected[1].state_dict()[name])
+                        for name, value in expected[0].state_dict().items()
+                    )
+                )
+
+    def test_initialization_advances_only_the_supplied_generator(self) -> None:
+        generator = RandomStreamFactory(42).torch(StreamId.MODEL_INIT)
+        generator_before = generator.get_state().clone()
+        default_before = torch.get_rng_state().clone()
+
+        build_policy(
+            PolicyConfig(
+                policy_type="mse",
+                state_dim=3,
+                action_dim=2,
+                chunk_size=1,
+                hidden_dims=(4,),
+            ),
+            cpu_generator=generator,
+        )
+
+        self.assertFalse(torch.equal(generator_before, generator.get_state()))
+        self.assertTrue(torch.equal(default_before, torch.get_rng_state()))
+
+    def test_failed_construction_preserves_default_rng(self) -> None:
+        before = torch.get_rng_state().clone()
+
+        with self.assertRaises(ValueError):
+            build_policy(
+                PolicyConfig(
+                    policy_type="mse",
+                    state_dim=0,
+                    action_dim=2,
+                    chunk_size=1,
+                ),
+                cpu_generator=RandomStreamFactory(42).torch(
+                    StreamId.MODEL_INIT,
+                ),
+            )
+
+        self.assertTrue(torch.equal(before, torch.get_rng_state()))
+
+    def test_target_device_transfer_preserves_initialized_values(self) -> None:
+        accelerator = torch.accelerator.current_accelerator()
+        if accelerator is None or not torch.accelerator.is_available():
+            self.skipTest("No accelerator available")
+
+        config = PolicyConfig(
+            policy_type="flow",
+            state_dim=3,
+            action_dim=2,
+            chunk_size=1,
+            hidden_dims=(4,),
+        )
+
+        def build(device: torch.device | str) -> BasePolicy:
+            return build_policy(
+                config,
+                cpu_generator=RandomStreamFactory(42).torch(
+                    StreamId.MODEL_INIT,
+                ),
+                target_device=device,
+            )
+
+        reference = build("cpu")
+        actual = build(accelerator)
+
+        for name, value in actual.state_dict().items():
+            self.assertEqual(value.device.type, accelerator.type)
+            torch.testing.assert_close(
+                value.cpu(),
+                reference.state_dict()[name],
+                rtol=0,
+                atol=0,
+            )
+
+
 class RandomnessIntegrationTests(unittest.TestCase):
+    def test_loading_and_initialization_can_run_concurrently(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "policy.pt"
+            reference = make_policy()
+            save_policy(path, reference, make_normalizer())
+
+            before = torch.get_rng_state().clone()
+            barrier = Barrier(2)
+
+            def initialize() -> BasePolicy:
+                barrier.wait(timeout=10)
+                return make_policy()
+
+            def load() -> BasePolicy:
+                barrier.wait(timeout=10)
+                model, _, _ = load_policy(path)
+                return model
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                initialized_future = executor.submit(initialize)
+                loaded_future = executor.submit(load)
+                initialized = initialized_future.result()
+                loaded = loaded_future.result()
+
+            self.assertTrue(torch.equal(before, torch.get_rng_state()))
+            self.assertTrue(initialized.training)
+            self.assertFalse(loaded.training)
+
+            for result in (initialized, loaded):
+                for name, value in result.state_dict().items():
+                    torch.testing.assert_close(
+                        value,
+                        reference.state_dict()[name],
+                        rtol=0,
+                        atol=0,
+                    )
+
     def test_loading_preserves_default_rng_even_when_weights_are_invalid(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "policy.pt"

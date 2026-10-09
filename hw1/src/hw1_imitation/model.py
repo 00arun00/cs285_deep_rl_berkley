@@ -40,17 +40,11 @@ class BasePolicy(nn.Module, metaclass=abc.ABCMeta):
         super().__init__()
         self.config = config
 
-    @property
-    def state_dim(self) -> int:
-        return self.config.state_dim
-
-    @property
-    def action_dim(self) -> int:
-        return self.config.action_dim
-
-    @property
-    def chunk_size(self) -> int:
-        return self.config.chunk_size
+    @abc.abstractmethod
+    def reset_parameters(self, generator: torch.Generator) -> None:
+        """Enforce that every policy explicitly defines how its specific
+        architecture is initialized using the passed generator.
+        """
 
     @abc.abstractmethod
     def compute_loss(
@@ -80,27 +74,73 @@ class BasePolicy(nn.Module, metaclass=abc.ABCMeta):
         num_steps controls flow integration; MSE policies ignore it.
         """
 
+    @property
+    def state_dim(self) -> int:
+        return self.config.state_dim
+
+    @property
+    def action_dim(self) -> int:
+        return self.config.action_dim
+
+    @property
+    def chunk_size(self) -> int:
+        return self.config.chunk_size
+
 
 class SimpleMLP(nn.Sequential):
     """Helper module to construct a simple MLP"""
 
     def __init__(
-        self, input_dim: int, hidden_dims: tuple[int, ...], output_dim: int
+        self,
+        input_dim: int,
+        hidden_dims: tuple[int, ...],
+        output_dim: int,
     ) -> None:
         dims = [input_dim] + list(hidden_dims) + [output_dim]
-        layers = []
 
-        for idx in range(len(dims) - 1):
-            layers.append(
-                nn.Linear(
-                    in_features=dims[idx],
-                    out_features=dims[idx + 1],
-                )
-            )
-            if idx < len(dims) - 2:
-                layers.append(nn.ReLU())
+        if any(dim <= 0 for dim in dims):
+            raise ValueError(f"All MLP dimensions must be positive; got {dims}")
+
+        layers = []
+        for input_size, output_size in zip(dims, dims[1:]):
+            layers.append(nn.Linear(input_size, output_size))
+            layers.append(nn.ReLU())
+
+        # The output layer has no activation.
+        layers.pop()
 
         super().__init__(*layers)
+
+    def reset_parameters(
+        self,
+        *,
+        generator: torch.Generator,
+    ) -> None:
+        for layer in self:
+            if isinstance(layer, nn.Linear):
+                # Matches Linear's default distribution for positive fan-in.
+                bound = layer.in_features**-0.5
+
+                nn.init.uniform_(
+                    layer.weight,
+                    -bound,
+                    bound,
+                    generator=generator,
+                )
+                if layer.bias is not None:
+                    nn.init.uniform_(
+                        layer.bias,
+                        -bound,
+                        bound,
+                        generator=generator,
+                    )
+            elif isinstance(layer, nn.ReLU):
+                pass
+            else:
+                raise TypeError(
+                    "No explicit initialization defined for "
+                    + f"{type(layer).__name__}"
+                )
 
 
 class MSEPolicy(BasePolicy):
@@ -144,6 +184,9 @@ class MSEPolicy(BasePolicy):
             self.chunk_size,
             self.action_dim,
         )
+
+    def reset_parameters(self, generator: torch.Generator) -> None:
+        self.model.reset_parameters(generator=generator)
 
 
 class FlowMatchingPolicy(BasePolicy):
@@ -278,8 +321,11 @@ class FlowMatchingPolicy(BasePolicy):
             self.action_dim,
         )
 
+    def reset_parameters(self, generator: torch.Generator) -> None:
+        self.model.reset_parameters(generator=generator)
 
-def build_policy(config: PolicyConfig) -> BasePolicy:
+
+def construct_policy(config: PolicyConfig) -> BasePolicy:
     """Construct a policy from its architecture configuration."""
     if config.policy_type == "mse":
         return MSEPolicy(config)
@@ -288,3 +334,27 @@ def build_policy(config: PolicyConfig) -> BasePolicy:
         return FlowMatchingPolicy(config)
 
     raise ValueError(f"Unknown policy type: {config.policy_type}")
+
+
+def build_policy(
+    config: PolicyConfig,
+    *,
+    cpu_generator: torch.Generator,
+    target_device: torch.device | str = "cpu",
+) -> BasePolicy:
+    """Return an initialized policy on target_device.
+
+    Initialization advances only the caller-owned cpu_generator.
+    For reproducible initialization, concurrent calls must use separate
+    generator objects.
+    Default RNG states are not modified.
+    """
+    if cpu_generator.device != torch.device("cpu"):
+        raise ValueError("Policy initialization requires a CPU generator")
+
+    with torch.device("meta"):
+        policy = construct_policy(config)
+
+    policy.to_empty(device="cpu")
+    policy.reset_parameters(generator=cpu_generator)
+    return policy.to(device=target_device)
