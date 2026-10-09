@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import logging
-import random
+from collections.abc import Sequence
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-import numpy as np
 import torch
 import tyro
 from rich import box
@@ -37,6 +36,7 @@ from hw1_imitation.evaluation import (
 )
 from hw1_imitation.logging_utils import ExperimentLogger
 from hw1_imitation.model import BasePolicy, PolicyConfig, PolicyType, build_policy
+from hw1_imitation.randomness import RandomStreamFactory, StreamId
 
 LOGDIR_PREFIX = "exp"
 
@@ -54,11 +54,9 @@ class TrainConfig:
 
     # Dataset and sample preparation.
     data_dir: Path = Path("data")
-    data_split_seed: int = 42
     pad_action_chunk_with_last_action: bool = True
 
     # Training — applies to both fresh and loaded policies.
-    seed: int = 42
     num_epochs: int = 400
     batch_size: int = 128
     lr: float = 3e-4
@@ -80,6 +78,20 @@ class TrainConfig:
     num_video_episodes: int = 5
     video_size: tuple[int, int] = (256, 256)
 
+    # Root seed identifies the experiment family.
+    # Keep it fixed when varying individual sources of randomness.
+    seed: int = 42
+
+    # Independently selectable realizations of each stream.
+    data_split_variation: int = 0
+    model_init_variation: int = 0
+    train_loader_variation: int = 0
+    train_loss_variation: int = 0
+    validation_loader_variation: int = 0
+    validation_loss_variation: int = 0
+    eval_env_variation: int = 0
+    eval_policy_variation: int = 0
+
     # Training metrics and experiment tracking.
     log_csv: bool = True
     log_wandb: bool = True
@@ -90,7 +102,7 @@ class TrainConfig:
     # Print the effective configuration and dataset/model facts before training.
     show_summary: bool = True
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         for name in (
             "num_epochs",
             "batch_size",
@@ -104,6 +116,19 @@ class TrainConfig:
         ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
+
+        streams = RandomStreamFactory(root_seed=self.seed)
+        for stream, variation in (
+            (StreamId.DATA_SPLIT, self.data_split_variation),
+            (StreamId.MODEL_INIT, self.model_init_variation),
+            (StreamId.TRAIN_LOADER, self.train_loader_variation),
+            (StreamId.TRAIN_LOSS, self.train_loss_variation),
+            (StreamId.VALIDATION_LOADER, self.validation_loader_variation),
+            (StreamId.VALIDATION_LOSS, self.validation_loss_variation),
+            (StreamId.EVAL_ENV, self.eval_env_variation),
+            (StreamId.EVAL_POLICY, self.eval_policy_variation),
+        ):
+            streams.validate(stream, variation=variation)
 
         if self.checkpoint_top_k < 0:
             raise ValueError("checkpoint_top_k must be nonnegative")
@@ -170,6 +195,7 @@ def build_training_summary(
     table.add_row("Parameters", f"{parameters:,} trainable")
     if architecture.policy_type == "flow":
         table.add_row("Flow sampling", f"{config.flow_num_steps} steps")
+
     table.add_section()
 
     table.add_row("Dataset", Text(str(dataset_path.resolve())))
@@ -191,9 +217,26 @@ def build_training_summary(
         if config.init_from is None
         else "Loaded from checkpoint",
     )
+    table.add_section()
+    table.add_row("Root seed", str(config.seed))
+    table.add_row("Data split variation", str(config.data_split_variation))
     table.add_row(
-        "Seeds", f"Training: {config.seed} · data split: {config.data_split_seed}"
+        "Training variations",
+        f"Initialization: {config.model_init_variation} · "
+        f"loader: {config.train_loader_variation} · "
+        f"loss: {config.train_loss_variation}",
     )
+    table.add_row(
+        "Validation variations",
+        f"Loader: {config.validation_loader_variation} · "
+        f"loss: {config.validation_loss_variation}",
+    )
+    table.add_row(
+        "Evaluation variations",
+        f"Environment: {config.eval_env_variation} · "
+        f"policy: {config.eval_policy_variation}",
+    )
+
     table.add_section()
 
     table.add_row(
@@ -241,7 +284,7 @@ def build_training_summary(
             f"{retention} · after each evaluation"
             if config.save_checkpoints
             else "Disabled",
-            style=None if config.save_checkpoints else "dim",
+            style="" if config.save_checkpoints else "dim",
         ),
     )
     width, height = config.video_size
@@ -251,7 +294,7 @@ def build_training_summary(
             f"Up to {config.num_video_episodes} episodes/evaluation · {width} × {height}"
             if config.num_video_episodes
             else "Disabled",
-            style=None if config.num_video_episodes else "dim",
+            style="" if config.num_video_episodes else "dim",
         ),
     )
     return table
@@ -272,12 +315,6 @@ def parse_train_config(
     )
 
 
-def set_seed(seed: int) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-
 
 def config_to_dict(config: TrainConfig) -> dict[str, Any]:
     data = asdict(config)
@@ -294,7 +331,17 @@ def build_loaders(
     normalizer: Normalizer,
     *,
     chunk_size: int,
+    train_generator: torch.Generator,
+    validation_generator: torch.Generator,
 ) -> tuple[DataLoader, DataLoader]:
+    """Build loaders over fixed train and validation subsets.
+
+    The training generator advances to produce successive epoch shuffles.
+    Recreating it with the same identity at the start of another run reproduces
+    that shuffle sequence, assuming unchanged dataset and loader settings.
+
+    Validation sample order is fixed. Neither generator changes split membership.
+    """
     train_dataset = EpisodeChunkDataset(
         episodes=train_episodes,
         chunk_length=chunk_size,
@@ -313,12 +360,16 @@ def build_loaders(
         batch_size=config.batch_size,
         shuffle=True,
         drop_last=True,
+        num_workers=0,
+        generator=train_generator,
     )
     validation_loader = DataLoader(
         dataset=validation_dataset,
         batch_size=config.batch_size,
         shuffle=False,
         drop_last=False,
+        num_workers=0,
+        generator=validation_generator,
     )
 
     return train_loader, validation_loader
@@ -329,18 +380,26 @@ def train_step(
     optimizer: torch.optim.Optimizer,
     state: torch.Tensor,
     action_chunk: torch.Tensor,
+    *,
+    generator: torch.Generator,
 ) -> torch.Tensor:
     """Run 1 step of training"""
     model.train()
     optimizer.zero_grad(set_to_none=True)
-    loss = model.compute_loss(state=state, action_chunk=action_chunk)
+
+    loss = model.compute_loss(
+        state=state,
+        action_chunk=action_chunk,
+        generator=generator,
+    )
+
     loss.backward()
     optimizer.step()
     return loss.detach()
 
 
 def run_training(config: TrainConfig) -> None:
-    set_seed(config.seed)
+    streams = RandomStreamFactory(root_seed=config.seed)
 
     device = torch.accelerator.current_accelerator()
     if device is None or not torch.accelerator.is_available():
@@ -349,29 +408,60 @@ def run_training(config: TrainConfig) -> None:
     zarr_path = download_pusht(config.data_dir)
     episodes_dataset = load_episodes_dataset(zarr_path=zarr_path)
 
-    # We are not spliting out a test becuase we use evaluate_policy
-    # where we have access to new gym env states to test performance against
+    # We are not splitting out a test because policy performance is
+    # evaluated through environment rollouts using separately controlled
+    # evaluation randomness.
     train_episodes_subset, validation_episodes_subset = random_split(
         dataset=episodes_dataset,
         lengths=[0.8, 0.2],
-        generator=torch.Generator().manual_seed(config.data_split_seed),
+        generator=streams.torch(
+            StreamId.DATA_SPLIT,
+            variation=config.data_split_variation,
+        ),
     )
 
-    if config.init_from is None:
-        normalizer = Normalizer.from_episodes_data(episodes=train_episodes_subset)
+    # Torch Module constructor used here does not accept a generator,
+    # so construction alters default RNG on the allocation device.
+    # Default RNG state management differs across device backends.
+    # Construct on CPU and move the completed model to the final target device.
+    # This avoids backend-specific initialization code. While doing this we
+    # need to capture RNG, supply new stream, then restore RNG.
+    # NOTE: this does not guarantee identical training results across devices.
+    with torch.random.fork_rng(devices=[]), torch.device("cpu"):
+        torch.set_rng_state(
+            streams.torch(
+                StreamId.MODEL_INIT,
+                variation=config.model_init_variation,
+            ).get_state()
+        )
+        if config.init_from is None:
+            normalizer = Normalizer.from_episodes_data(episodes=train_episodes_subset)
 
-        model = build_policy(
-            PolicyConfig(
-                policy_type=config.policy_type,
-                state_dim=normalizer.state_dim,
-                action_dim=normalizer.action_dim,
-                chunk_size=config.chunk_size,
-                hidden_dims=config.hidden_dims,
+            model = build_policy(
+                PolicyConfig(
+                    policy_type=config.policy_type,
+                    state_dim=normalizer.state_dim,
+                    action_dim=normalizer.action_dim,
+                    chunk_size=config.chunk_size,
+                    hidden_dims=config.hidden_dims,
+                )
             )
-        ).to(device=device)
 
-    else:
-        model, normalizer, _ = load_policy(path=config.init_from, device=device)
+        else:
+            # Loading reconstructs modules before replacing the weights.
+            # Isolate the discarded init draws from surrounding RNG.
+            model, normalizer, _ = load_policy(path=config.init_from, device="cpu")
+
+    model = model.to(device=device)
+    device = next(model.parameters()).device
+
+    # Create fresh for each training run; advance across its batches and epochs.
+    # Streams with matching identities on the same backend reproduce the starting RNG state.
+    train_loss_generator = streams.torch(
+        StreamId.TRAIN_LOSS,
+        variation=config.train_loss_variation,
+        device=device,
+    )
 
     train_loader, validation_loader = build_loaders(
         config=config,
@@ -379,6 +469,14 @@ def run_training(config: TrainConfig) -> None:
         validation_episodes=validation_episodes_subset,
         normalizer=normalizer,
         chunk_size=model.chunk_size,
+        train_generator=streams.torch(
+            StreamId.TRAIN_LOADER,
+            variation=config.train_loader_variation,
+        ),
+        validation_generator=streams.torch(
+            StreamId.VALIDATION_LOADER,
+            variation=config.validation_loader_variation,
+        ),
     )
 
     if len(train_loader) == 0:
@@ -451,8 +549,12 @@ def run_training(config: TrainConfig) -> None:
                     dataset_path=zarr_path,
                     train_episodes=len(train_episodes_subset),
                     validation_episodes=len(validation_episodes_subset),
-                    train_samples=len(train_loader.dataset),
-                    validation_samples=len(validation_loader.dataset),
+                    train_samples=len(
+                        cast(Sequence, train_loader.dataset)
+                    ),  # can be safely casted here since dataset does have len.
+                    validation_samples=len(
+                        cast(Sequence, validation_loader.dataset)
+                    ),  # can be safely casted here since dataset does have len.
                     steps_per_epoch=len(train_loader),
                 )
             )
@@ -478,6 +580,7 @@ def run_training(config: TrainConfig) -> None:
                         optimizer=optimizer,
                         state=state.to(device),
                         action_chunk=action_chunk.to(device),
+                        generator=train_loss_generator,
                     )
                     global_step += 1
 
@@ -520,10 +623,17 @@ def run_training(config: TrainConfig) -> None:
                     progress.update(1)
 
                     if validation_due:
+                        # Restart validation RNG for each complete pass so checkpoints use
+                        # matching draws, assuming unchanged batch order and sampling shapes.
                         validation_result = compute_validation_loss(
                             model=model,
                             loader=validation_loader,
                             device=device,
+                            generator=streams.torch(
+                                StreamId.VALIDATION_LOSS,
+                                variation=config.validation_loss_variation,
+                                device=device,
+                            ),
                         )
                         logger.log_validation(
                             global_step=global_step,
@@ -554,6 +664,9 @@ def run_training(config: TrainConfig) -> None:
                                 else config.eval_episodes
                             ),
                             flow_num_steps=config.flow_num_steps,
+                            streams=streams,
+                            env_variation=config.eval_env_variation,
+                            policy_variation=config.eval_policy_variation,
                             video_dir=video_dir,
                             show_progress=not progress.disable,
                             progress_position=1,

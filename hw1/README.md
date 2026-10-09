@@ -135,9 +135,11 @@ states = torch.as_tensor(
     normalizer.normalize_state(raw_observations),
     dtype=torch.float32,
 )
+generator = torch.Generator(device=states.device).manual_seed(42)
 with torch.no_grad():
     normalized_actions = model.sample_actions(
         states,
+        generator=generator,
         num_steps=inference_config["flow_num_steps"],
     )
 actions = normalizer.denormalize_action(normalized_actions.cpu().numpy())
@@ -145,8 +147,9 @@ actions = normalizer.denormalize_action(normalized_actions.cpu().numpy())
 ```
 
 The loader returns the model in evaluation mode. For rollout evaluation, pass
-`model.chunk_size` and the saved `flow_num_steps` to `evaluate_policy()`. You can
-explicitly choose a different flow integration step count when evaluating.
+`model.chunk_size`, the saved `flow_num_steps`, and a `RandomStreamFactory` via
+`streams=` to `evaluate_policy()`. You can explicitly choose a different flow
+integration step count when evaluating.
 
 ### Train further from saved weights
 

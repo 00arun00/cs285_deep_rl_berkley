@@ -90,12 +90,18 @@ def load_policy(
 
     Args:
         path: Checkpoint produced by save_policy().
-        device: Device on which to construct the policy.
+        device: Device on which to return the policy. Construction and weight
+            loading happen on CPU before transferring the model to this device.
 
     Returns:
         model: Loaded policy in evaluation mode.
         normalizer: Saved observation/action normalization statistics.
         inference_config: Saved inference defaults.
+
+    Model construction preserves the caller's default CPU RNG state.
+    Inference randomness remains caller-owned and is supplied when sampling
+    actions. The temporary RNG scope assumes no concurrent use of the default
+    CPU RNG by other threads.
 
     For further training, construct a new optimizer and call model.train().
     No optimizer state, training position, or saved RNG state is restored.
@@ -129,8 +135,13 @@ def load_policy(
     ):
         raise ValueError("Checkpoint flow_num_steps must be a positive integer")
 
-    model = build_policy(policy_config).to(device)
-    model.load_state_dict(checkpoint["model_state_dict"])
+    # Constructors used here consume the default RNG.
+    # Construct on CPU and restore its RNG state on scope exit.
+    with torch.random.fork_rng(devices=[]), torch.device("cpu"):
+        model = build_policy(policy_config)
+        model.load_state_dict(checkpoint["model_state_dict"], strict=True)
+
+    model = model.to(device=device)
     model.eval()
 
     return (
