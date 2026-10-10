@@ -26,11 +26,16 @@ class TestCheckpointRetention:
             step = artifact.metadata["step"]
             self.artifacts[step] = artifact
 
+            existing_paths = [
+                record.path
+                for record in self.checkpoints.values()
+                if record.path.exists()
+            ]
+
             def wait():
                 # No existing retained file may disappear before upload succeeds.
-                for record in self.checkpoints.values():
-                    if record.path.exists():
-                        assert record.path.read_bytes() == b"checkpoint"
+                for path in existing_paths:
+                    assert path.read_bytes() == b"checkpoint"
                 if self.upload_error:
                     raise self.upload_error
                 for alias in aliases:
@@ -90,11 +95,24 @@ class TestCheckpointRetention:
 
     def test_failed_upload_does_not_prune(self):
         self.save(1, 1.0, top_k=0)
+        before = dict(self.checkpoints)
+        aliases_before = dict(self.aliases)
+        original_upload = self.run.log_artifact.side_effect
+
+        def upload(artifact, *, aliases):
+            assert self.checkpoints == before
+            assert self.aliases == aliases_before
+            assert before[1].path.read_bytes() == b"checkpoint"
+            return original_upload(artifact, aliases=aliases)
+
+        self.run.log_artifact.side_effect = upload
         self.upload_error = RuntimeError("upload failed")
         with pytest.raises(RuntimeError, match="upload failed"):
             self.save(2, 0.1, top_k=0)
         assert set(self.checkpoints) == {1}
         assert self.local_steps() == {1, 2}
+        assert self.checkpoints == before
+        assert self.aliases == aliases_before
         self.artifacts[1].delete.assert_not_called()
 
     def test_failed_remote_cleanup_retries_without_retaining_local_file(self, caplog):
@@ -154,11 +172,24 @@ class TestCheckpointRetention:
         self.run.log_artifact.assert_not_called()
         evaluation.wandb.Artifact.assert_not_called()
 
-    def test_invalid_inputs_do_not_save(self):
-        for score in (float("nan"), float("inf")):
-            with pytest.raises(ValueError, match="finite"):
-                self.save(1, score)
-        self.run.offline = True
-        with pytest.raises(ValueError, match="online"):
-            self.save(1, 0.5)
+    @pytest.mark.parametrize(
+        "score,top_k,offline,message",
+        [
+            (float("nan"), 3, False, "finite"),
+            (float("inf"), 3, False, "finite"),
+            (-float("inf"), 3, False, "finite"),
+            (0.5, -1, False, "top_k"),
+            (0.5, 3, True, "online"),
+        ],
+    )
+    def test_invalid_inputs_do_not_save(self, score, top_k, offline, message):
+        self.run.offline = offline
+        with patch.object(evaluation, "save_policy") as save:
+            with pytest.raises(ValueError, match=message):
+                self.save(1, score, top_k=top_k)
+            save.assert_not_called()
+        self.run.log_artifact.assert_not_called()
+        evaluation.wandb.Artifact.assert_not_called()
+        assert self.checkpoints == {}
+        assert self.aliases == {}
         assert not (self.root / "checkpoints").exists()

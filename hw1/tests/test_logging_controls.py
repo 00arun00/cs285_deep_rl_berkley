@@ -10,14 +10,16 @@ from hw1_imitation.checkpoint import load_policy
 from hw1_imitation.data import Episode, EpisodesDataset
 from hw1_imitation.evaluation import EvaluationResults
 
+from .summary_helpers import summary_row_numbers, summary_row_value
+
 
 class TestLoggingControls:
     def test_cli_defaults_and_disable_flags(self):
         defaults = train.parse_train_config([])
-        for field in ("log_csv", "log_wandb", "save_checkpoints"):
+        for field in ("log_csv", "log_wandb", "save_checkpoints", "show_summary"):
             assert getattr(defaults, field)
             parsed = train.parse_train_config(["--no-" + field.replace("_", "-")])
-            for other in ("log_csv", "log_wandb", "save_checkpoints"):
+            for other in ("log_csv", "log_wandb", "save_checkpoints", "show_summary"):
                 assert getattr(parsed, other) == (other != field)
 
     def test_disabled_logger_skips_video_validation(self, tmp_path):
@@ -44,17 +46,20 @@ class TestLoggingControls:
     "show_summary", [False, True], ids=["show_summary=off", "show_summary=on"]
 )
 def test_all_output_combinations(
-    log_csv, log_wandb, save_checkpoints, show_summary, tmp_path
+    log_csv, log_wandb, save_checkpoints, show_summary, tmp_path, capsys, monkeypatch
 ):
+    # Keep semantic rows on one line regardless of the invoking terminal.
+    monkeypatch.setenv("COLUMNS", "160")
+    episode_count, episode_length = 5, 2
     rng = np.random.default_rng(7)
     episodes = EpisodesDataset(
         tuple(
             Episode(
                 i,
-                rng.normal(size=(2, 3)).astype(np.float32),
-                rng.normal(size=(2, 2)).astype(np.float32),
+                rng.normal(size=(episode_length, 3)).astype(np.float32),
+                rng.normal(size=(episode_length, 2)).astype(np.float32),
             )
-            for i in range(5)
+            for i in range(episode_count)
         )
     )
     root = tmp_path
@@ -69,7 +74,24 @@ def test_all_output_combinations(
         batch_size=8,
         num_video_episodes=0,
     )
+    real_step = train.train_step
+    real_validation = train.compute_validation_loss
+    observed = {}
+
+    def step(*args, **kwargs):
+        result = real_step(*args, **kwargs)
+        observed["train_loss"] = result.item()
+        return result
+
+    def validate(*args, **kwargs):
+        result = real_validation(*args, **kwargs)
+        observed["validation_loss"] = result.loss_mean
+        observed["validation_examples"] = result.examples_count
+        return result
+
     with (
+        patch.object(train, "train_step", side_effect=step),
+        patch.object(train, "compute_validation_loss", side_effect=validate),
         patch.object(train, "LOGDIR_PREFIX", str(root)),
         patch.object(train, "download_pusht", return_value=root),
         patch.object(train, "load_episodes_dataset", return_value=episodes),
@@ -78,12 +100,6 @@ def test_all_output_combinations(
             "current_accelerator",
             return_value=None,
         ),
-        patch.object(train, "Console") as console,
-        patch.object(
-            train,
-            "build_training_summary",
-            wraps=train.build_training_summary,
-        ) as build_summary,
         patch.object(train.wandb, "init") as initialize,
         patch.object(train.wandb, "Artifact") as artifact,
         patch.object(
@@ -97,50 +113,77 @@ def test_all_output_combinations(
         run.id = "test"
         train.run_training(config)
 
-    if config.show_summary:
-        console.assert_called_once_with(stderr=True)
-        console.return_value.print.assert_called_once()
-        summary = build_summary.call_args.kwargs
-        assert summary["config"] is config
-        assert summary["train_episodes"] == 4
-        assert summary["validation_episodes"] == 1
-        assert summary["train_samples"] == 8
-        assert summary["validation_samples"] == 2
-        assert summary["steps_per_epoch"] == 1
-        assert summary["device"] == "cpu"
+    captured = capsys.readouterr()
+    if show_summary:
+        # The five equal-length episodes split 80/20 into four train and one
+        # validation episode. With horizon one, every timestep is a sample.
+        train_episodes = episode_count * 4 // 5
+        validation_episodes = episode_count - train_episodes
+        train_samples = train_episodes * episode_length
+        validation_samples = validation_episodes * episode_length
+        optimizer_steps = config.num_epochs * (train_samples // config.batch_size)
+        assert summary_row_numbers(captured.err, "Episodes") == [
+            train_episodes,
+            validation_episodes,
+        ]
+        assert summary_row_numbers(captured.err, "Training samples") == [train_samples]
+        assert summary_row_numbers(captured.err, "Validation samples") == [
+            validation_samples
+        ]
+        assert summary_row_numbers(captured.err, "Training budget") == [
+            config.num_epochs,
+            optimizer_steps,
+        ]
+        assert summary_row_value(captured.err, "Device") == "cpu"
+        assert "Training samples" not in captured.out
     else:
-        console.assert_not_called()
-        build_summary.assert_not_called()
+        assert "Training samples" not in captured.err + captured.out
 
     evaluate.assert_called_once()
+    train_metrics = {
+        "epoch": 0,
+        "loss_window_mean": observed["train_loss"],
+        "window_examples_count": 8,
+    }
+    validation_metrics = {
+        "loss_mean": observed["validation_loss"],
+        "examples_count": observed["validation_examples"],
+    }
+    assert observed["validation_examples"] == 2
+    eval_metrics = {"mean_reward": 0.5, "num_episodes": 1}
+    expected = {
+        "train": train_metrics,
+        "validation": validation_metrics,
+        "eval": eval_metrics,
+    }
     if log_wandb:
         initialize.assert_called_once()
-        assert run.log.call_count == 3
-        run.log.assert_any_call(
+        payloads = [call.args[0] for call in run.log.call_args_list]
+        assert payloads == [
             {
                 "global_step": 1,
-                "eval/mean_reward": 0.5,
-                "eval/num_episodes": 1,
+                **{f"{namespace}/{key}": value for key, value in metrics.items()},
             }
-        )
+            for namespace, metrics in expected.items()
+        ]
     else:
         initialize.assert_not_called()
         run.log.assert_not_called()
 
     csv_paths = sorted(root.rglob("*.csv"))
-    assert len(csv_paths) == (3 if log_csv else 0)
+    assert {path.name for path in csv_paths} == (
+        {"train.csv", "validation.csv", "eval.csv"} if log_csv else set()
+    )
     for path in csv_paths:
         with path.open() as file:
             rows = list(csv.DictReader(file))
-        assert len(rows) == 1
-        assert rows[0]["global_step"] == "1"
-        if path.name == "eval.csv":
-            assert rows[0] == {
-                "global_step": "1",
-                "mean_reward": "0.5",
-                "num_episodes": "1",
-                "video_paths": "[]",
-            }
+        expected_row = {
+            "global_step": "1",
+            **{key: str(value) for key, value in expected[path.stem].items()},
+        }
+        if path.stem == "eval":
+            expected_row["video_paths"] = "[]"
+        assert rows == [expected_row]
 
     checkpoints = list(root.rglob("*.pt"))
     assert len(checkpoints) == int(save_checkpoints)

@@ -3,13 +3,26 @@
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 from hw1_imitation import train
 from hw1_imitation.data import Episode, EpisodesDataset
 from hw1_imitation.evaluation import EvaluationResults
 
 
 class TestEvaluationBudget:
-    def test_final_step_uses_final_budget_exactly_once(self, tmp_path):
+    @pytest.mark.parametrize(
+        "batch_size,interval,expected",
+        [
+            (4, 2, [(2, 5), (4, 5), (6, 50)]),
+            (4, 4, [(4, 5), (6, 50)]),
+            (4, 10, [(6, 50)]),
+            (24, 1, [(1, 50)]),
+        ],
+        ids=["aligned-final", "unaligned-final", "short-run", "one-step"],
+    )
+    def test_final_step_uses_final_budget_exactly_once(
+        self, tmp_path, batch_size, interval, expected
+    ):
         rng = np.random.default_rng(7)
         episodes = EpisodesDataset(
             tuple(
@@ -23,10 +36,10 @@ class TestEvaluationBudget:
         )
         config = train.TrainConfig(
             num_epochs=1,
-            batch_size=4,
+            batch_size=batch_size,
             hidden_dims=(4,),
             chunk_size=1,
-            eval_interval=2,
+            eval_interval=interval,
             eval_episodes=5,
             final_eval_episodes=50,
             num_video_episodes=0,
@@ -35,6 +48,20 @@ class TestEvaluationBudget:
             log_csv=False,
             show_summary=False,
         )
+        steps = 0
+        evaluations = []
+        real_step = train.train_step
+
+        def step(*args, **kwargs):
+            nonlocal steps
+            result = real_step(*args, **kwargs)
+            steps += 1
+            return result
+
+        def evaluate(**kwargs):
+            evaluations.append((steps, kwargs["num_eval_episodes"]))
+            return EvaluationResults(0.5, kwargs["num_eval_episodes"], ())
+
         root = tmp_path
         with (
             patch.object(train, "LOGDIR_PREFIX", str(root)),
@@ -46,12 +73,10 @@ class TestEvaluationBudget:
             patch.object(
                 train,
                 "evaluate_policy",
-                return_value=EvaluationResults(0.5, 1, ()),
-            ) as evaluate,
+                side_effect=evaluate,
+            ),
+            patch.object(train, "train_step", side_effect=step),
         ):
             train.run_training(config)
 
-        # Six training steps: periodic rollouts at 2 and 4; final only at 6.
-        assert [
-            call.kwargs["num_eval_episodes"] for call in evaluate.call_args_list
-        ] == [5, 5, 50]
+        assert evaluations == expected

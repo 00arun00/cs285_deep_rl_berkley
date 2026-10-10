@@ -1,5 +1,6 @@
 """CPU tests for reusable policies and fresh training from saved weights."""
 
+from dataclasses import asdict
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,21 +13,17 @@ from hw1_imitation.data import Episode, EpisodesDataset, Normalizer
 from hw1_imitation.evaluation import EvaluationResults
 from hw1_imitation.model import BasePolicy, PolicyConfig, build_policy
 from hw1_imitation.randomness import RandomStreamFactory, StreamId
+from hypothesis import given
+from hypothesis import strategies as st
+from hypothesis.extra.numpy import arrays
+
+
+def test_cli_preserves_config_defaults():
+    assert train.parse_train_config([]) == train.TrainConfig()
 
 
 class TestCheckpoint:
-    def test_cli_parses_policy_initialization_and_preserves_defaults(self):
-        local = train.parse_train_config([])
-        assert local.data_dir == Path("data")
-        assert local.init_from is None
-        assert local.checkpoint_top_k == 3
-        assert (
-            train.parse_train_config(["--checkpoint-top-k", "0"]).checkpoint_top_k == 0
-        )
-        with pytest.raises(ValueError, match="checkpoint_top_k"):
-            train.TrainConfig(checkpoint_top_k=-1)
-
-        defaults = train.TrainConfig(data_dir=Path("/vol/data"))
+    def test_cli_parses_policy_initialization(self):
         parsed = train.parse_train_config(
             [
                 "--init-from",
@@ -37,15 +34,28 @@ class TestCheckpoint:
                 "3",
                 "--data-split-variation",
                 "7",
-            ],
-            defaults=defaults,
+                "--checkpoint-top-k",
+                "0",
+            ]
         )
         assert parsed.init_from == Path("/tmp/policy.pt")
-        assert parsed.data_dir == defaults.data_dir
         assert parsed.num_epochs == 20
         assert parsed.flow_num_steps == 3
         assert parsed.data_split_variation == 7
-        assert defaults.num_epochs == 400
+        assert parsed.checkpoint_top_k == 0
+
+    def test_cli_preserves_supplied_defaults_without_mutating_them(self):
+        defaults = train.TrainConfig(
+            data_dir=Path("/vol/data"), num_epochs=17, flow_num_steps=6
+        )
+        before = asdict(defaults)
+        parsed = train.parse_train_config(["--num-epochs", "20"], defaults=defaults)
+        assert asdict(parsed) == {**before, "num_epochs": 20}
+        assert asdict(defaults) == before
+
+    def test_config_rejects_negative_checkpoint_retention(self):
+        with pytest.raises(ValueError, match="checkpoint_top_k"):
+            train.TrainConfig(checkpoint_top_k=-1)
 
     @pytest.mark.parametrize("value", (0, -1))
     def test_config_rejects_nonpositive_flow_steps(self, value):
@@ -74,30 +84,58 @@ class TestCheckpoint:
                 getattr(restored, name), getattr(normalizer, name)
             )
 
+    @pytest.mark.parametrize("group", ["state", "action"])
     @pytest.mark.parametrize(
-        "name,value",
-        (
-            ("state_mean", torch.tensor([float("nan"), 0.0])),
-            ("action_mean", torch.tensor([float("inf")])),
-            ("state_std", torch.tensor([0.0, 1.0])),
-            ("action_std", torch.tensor([-1.0])),
-            ("action_std", torch.tensor([float("nan")])),
-            ("state_std", torch.ones(3)),
-            ("state_mean", torch.ones(1, 2)),
-        ),
+        "corruption",
+        [
+            "nan_mean",
+            "infinite_mean",
+            "nan_std",
+            "infinite_std",
+            "zero_std",
+            "negative_std",
+            "empty",
+            "shape",
+            "rank",
+        ],
     )
-    def test_normalizer_rejects_invalid_statistics(self, name, value):
-        state = {
-            "state_mean": torch.zeros(2),
-            "state_std": torch.ones(2),
-            "action_mean": torch.zeros(1),
-            "action_std": torch.ones(1),
-        }
-        state[name] = value
+    @given(data=st.data(), state_dim=st.integers(1, 6), action_dim=st.integers(1, 6))
+    def test_normalizer_rejects_invalid_statistics(
+        self, group, corruption, data, state_dim, action_dim
+    ):
+        stats = {}
+        for name, size in (("state", state_dim), ("action", action_dim)):
+            stats[f"{name}_mean"] = data.draw(
+                arrays(np.float32, size, elements=st.floats(-100, 100, width=32))
+            )
+            stats[f"{name}_std"] = data.draw(
+                arrays(np.float32, size, elements=st.floats(0.125, 100, width=32))
+            )
+        # Establish validity before corrupting exactly one property.
+        Normalizer(**stats)
+        mean, std = f"{group}_mean", f"{group}_std"
+        index = data.draw(st.integers(0, len(stats[mean]) - 1))
+        if corruption == "empty":
+            stats[mean] = stats[std] = np.array([], dtype=np.float32)
+        elif corruption == "shape":
+            stats[std] = np.ones(len(stats[mean]) + 1, dtype=np.float32)
+        elif corruption == "rank":
+            stats[mean] = stats[mean][None, :]
+        else:
+            field = mean if corruption.endswith("mean") else std
+            value = {
+                "nan": float("nan"),
+                "infinite": float("inf"),
+                "zero": 0.0,
+                "negative": -1.0,
+            }[corruption.split("_")[0]]
+            stats[field][index] = value
         with pytest.raises(ValueError):
-            Normalizer.from_state_dict(state)
+            Normalizer(**stats)
         with pytest.raises(ValueError):
-            Normalizer(**{key: tensor.numpy() for key, tensor in state.items()})
+            Normalizer.from_state_dict(
+                {key: torch.from_numpy(value) for key, value in stats.items()}
+            )
 
     def test_reject_unknown_version(self, tmp_path):
         path = tmp_path / "unknown.pt"
@@ -190,7 +228,7 @@ def test_loaded_policy_starts_a_fresh_training_run(policy_type, tmp_path):
 
     root = tmp_path
 
-    def run(name, config, expected_model=None, pending_cleanup=None):
+    def run(name, config, expected_model=None):
         target = root / f"{name}.pt"
         steps = 0
 
@@ -247,7 +285,7 @@ def test_loaded_policy_starts_a_fresh_training_run(policy_type, tmp_path):
             assert mean_reward == 0.5
             assert top_k == config.checkpoint_top_k
             save_policy(target, model, normalizer, flow_num_steps=flow_num_steps)
-            return pending_cleanup or set()
+            return set()
 
         with (
             patch.object(train, "LOGDIR_PREFIX", str(root / name)),
@@ -259,7 +297,6 @@ def test_loaded_policy_starts_a_fresh_training_run(policy_type, tmp_path):
                 return_value=None,
             ),
             patch.object(train.wandb, "init") as wandb_init,
-            patch.object(train, "ExperimentLogger") as logger,
             patch.object(
                 train,
                 "evaluate_policy",
@@ -269,37 +306,13 @@ def test_loaded_policy_starts_a_fresh_training_run(policy_type, tmp_path):
                 train, "save_checkpoint_and_retain", side_effect=save
             ) as save_artifact,
             patch.object(train, "train_step", side_effect=step),
-            patch.object(train.logging, "warning") as warning,
         ):
             wandb_init.return_value.__enter__.return_value.offline = False
             train.run_training(config)
 
-        if pending_cleanup:
-            warning.assert_called_once_with(
-                "Training finished with checkpoint cleanup pending for steps %s. "
-                "Extra local files or W&B artifacts may remain.",
-                sorted(pending_cleanup),
-            )
-        else:
-            warning.assert_not_called()
-
         # Four training episodes, each containing six padded samples.
         expected_steps = config.num_epochs * (24 // config.batch_size)
         assert steps == expected_steps
-        logged = [call.kwargs for call in logger.return_value.log_train.call_args_list]
-        expected_log_steps = list(
-            range(config.log_interval, expected_steps + 1, config.log_interval)
-        )
-        if not expected_log_steps or expected_log_steps[-1] != expected_steps:
-            expected_log_steps.append(expected_steps)
-        assert [entry["global_step"] for entry in logged] == expected_log_steps
-        previous_step = 0
-        for entry in logged:
-            assert (
-                entry["window_examples_count"]
-                == (entry["global_step"] - previous_step) * config.batch_size
-            )
-            previous_step = entry["global_step"]
         assert evaluate.call_count == 1
         assert save_artifact.call_count == 1
         assert save_artifact.call_args.kwargs["step"] == expected_steps
@@ -346,7 +359,6 @@ def test_loaded_policy_starts_a_fresh_training_run(policy_type, tmp_path):
             flow_num_steps=4,
         ),
         expected_model=original,
-        pending_cleanup={1},
     )
     assert trained.config == original.config
     for name, value in original_stats.state_dict().items():

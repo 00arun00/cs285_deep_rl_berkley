@@ -16,8 +16,10 @@ import torch
 from hw1_imitation import evaluation, train
 from hw1_imitation.checkpoint import load_policy, save_policy
 from hw1_imitation.data import Episode, EpisodesDataset, Normalizer
-from hw1_imitation.model import BasePolicy, PolicyConfig, build_policy
+from hw1_imitation.model import BasePolicy, PolicyConfig, SimpleMLP, build_policy
 from hw1_imitation.randomness import RandomStreamFactory, StreamId
+from hypothesis import example, given
+from hypothesis import strategies as st
 
 
 def make_policy() -> BasePolicy:
@@ -150,11 +152,34 @@ class TestRandomStream:
         assert torch.equal(torch_before, torch.get_rng_state())
 
     @pytest.mark.parametrize(
-        "value,error", [(True, TypeError), (1.5, TypeError), (-1, ValueError)]
+        "value,error",
+        [
+            (True, TypeError),
+            (1.5, TypeError),
+            (None, TypeError),
+            ("42", TypeError),
+            (np.int64(42), TypeError),
+            (-1, ValueError),
+        ],
     )
     def test_invalid_root_seeds_fail_instead_of_being_coerced(self, value, error):
         with pytest.raises(error):
             RandomStreamFactory(value)
+
+    @given(root=st.integers(min_value=0, max_value=2**256))
+    @example(root=0)
+    @example(root=2**80 + 42)
+    def test_valid_root_seeds_are_preserved(self, root):
+        factory = RandomStreamFactory(root)
+        assert factory.root_seed == root
+        seed = factory.seed(StreamId.TRAIN_LOSS)
+        assert 0 <= seed < 2**64
+        assert seed == RandomStreamFactory(root).seed(StreamId.TRAIN_LOSS)
+
+    @given(root=st.integers(max_value=-1))
+    def test_negative_root_seeds_are_rejected(self, root):
+        with pytest.raises(ValueError):
+            RandomStreamFactory(root)
 
     @pytest.mark.parametrize("method_name", ["validate", "seed", "numpy", "torch"])
     def test_raw_stream_ids_are_rejected(self, method_name):
@@ -166,13 +191,41 @@ class TestRandomStream:
     @pytest.mark.parametrize("coordinate", ["variation", "index"])
     @pytest.mark.parametrize(
         "value,error",
-        [(True, TypeError), (1.5, TypeError), (-1, ValueError), (2**32, ValueError)],
+        [
+            (True, TypeError),
+            (1.5, TypeError),
+            (None, TypeError),
+            ("0", TypeError),
+            (np.int64(0), TypeError),
+            (-1, ValueError),
+            (2**32, ValueError),
+        ],
     )
     def test_invalid_coordinates_fail_instead_of_being_coerced(
         self, method_name, coordinate, value, error
     ):
         method = getattr(RandomStreamFactory(42), method_name)
         with pytest.raises(error):
+            method(StreamId.TRAIN_LOSS, **{coordinate: value})
+
+    @pytest.mark.parametrize("method_name", ["validate", "seed", "numpy", "torch"])
+    @given(variation=st.integers(0, 2**32 - 1), index=st.integers(0, 2**32 - 1))
+    @example(variation=0, index=0)
+    @example(variation=2**32 - 1, index=2**32 - 1)
+    def test_valid_coordinate_boundaries_are_accepted(
+        self, method_name, variation, index
+    ):
+        method = getattr(RandomStreamFactory(42), method_name)
+        method(StreamId.TRAIN_LOSS, variation=variation, index=index)
+
+    @pytest.mark.parametrize("method_name", ["validate", "seed", "numpy", "torch"])
+    @pytest.mark.parametrize("coordinate", ["variation", "index"])
+    @given(value=st.one_of(st.integers(max_value=-1), st.integers(min_value=2**32)))
+    def test_out_of_range_coordinates_are_rejected(
+        self, method_name, coordinate, value
+    ):
+        method = getattr(RandomStreamFactory(42), method_name)
+        with pytest.raises(ValueError):
             method(StreamId.TRAIN_LOSS, **{coordinate: value})
 
 
@@ -231,14 +284,17 @@ class TestPolicyInitialization:
             )
         )
 
-    def test_initialization_advances_only_the_supplied_generator(self) -> None:
+    @pytest.mark.parametrize("policy_type", ["mse", "flow"])
+    def test_initialization_advances_only_the_supplied_generator(
+        self, policy_type
+    ) -> None:
         generator = RandomStreamFactory(42).torch(StreamId.MODEL_INIT)
         generator_before = generator.get_state().clone()
         default_before = torch.get_rng_state().clone()
 
         build_policy(
             PolicyConfig(
-                policy_type="mse",
+                policy_type=policy_type,
                 state_dim=3,
                 action_dim=2,
                 chunk_size=1,
@@ -267,6 +323,25 @@ class TestPolicyInitialization:
             )
 
         assert torch.equal(before, torch.get_rng_state())
+
+    @pytest.mark.parametrize("policy_type", ["mse", "flow"])
+    def test_failed_initialization_preserves_default_rng(self, policy_type):
+        generator = RandomStreamFactory(42).torch(StreamId.MODEL_INIT)
+        generator_before = generator.get_state().clone()
+        global_before = torch.get_rng_state().clone()
+        real_reset = SimpleMLP.reset_parameters
+
+        def fail_after_initialization(model, *, generator):
+            real_reset(model, generator=generator)
+            raise RuntimeError("injected initialization failure")
+
+        with patch.object(SimpleMLP, "reset_parameters", fail_after_initialization):
+            with pytest.raises(RuntimeError, match="injected initialization failure"):
+                build_policy(
+                    PolicyConfig(policy_type, 3, 2, 1, (4,)), cpu_generator=generator
+                )
+        assert not torch.equal(generator_before, generator.get_state())
+        assert torch.equal(global_before, torch.get_rng_state())
 
     def test_target_device_transfer_preserves_initialized_values(self) -> None:
         accelerator = torch.accelerator.current_accelerator()
@@ -307,6 +382,10 @@ class TestRandomnessIntegration:
     def test_loading_and_initialization_can_run_concurrently(self, tmp_path) -> None:
         path = tmp_path / "policy.pt"
         reference = make_policy()
+        initialized_reference = make_policy()
+        with torch.no_grad():
+            for parameter in reference.parameters():
+                parameter.add_(1.0)
         save_policy(path, reference, make_normalizer())
 
         before = torch.get_rng_state().clone()
@@ -331,11 +410,14 @@ class TestRandomnessIntegration:
         assert initialized.training
         assert not loaded.training
 
-        for result in (initialized, loaded):
+        for result, expected in (
+            (initialized, initialized_reference),
+            (loaded, reference),
+        ):
             for name, value in result.state_dict().items():
                 torch.testing.assert_close(
                     value,
-                    reference.state_dict()[name],
+                    expected.state_dict()[name],
                     rtol=0,
                     atol=0,
                 )
@@ -448,10 +530,26 @@ class TestRandomnessIntegration:
                     side_effect=lambda *args, **kwargs: TinyEnv(),
                 ),
                 patch.object(train, "train_step", side_effect=step),
+                patch.object(
+                    train,
+                    "compute_validation_loss",
+                    wraps=train.compute_validation_loss,
+                ) as validate,
+                patch.object(
+                    train, "evaluate_policy", wraps=train.evaluate_policy
+                ) as evaluate,
             ):
                 # Run real training, validation, and rollout evaluation. Only
                 # external data/environment boundaries and observation are patched.
                 train.run_training(config)
+            expected_validation_calls = sum(
+                step % validation_interval == 0 or step == 12 for step in range(1, 13)
+            )
+            expected_evaluation_calls = sum(
+                step % eval_interval == 0 or step == 12 for step in range(1, 13)
+            )
+            assert validate.call_count == expected_validation_calls
+            assert evaluate.call_count == expected_evaluation_calls
             return losses, weights
 
         root = tmp_path

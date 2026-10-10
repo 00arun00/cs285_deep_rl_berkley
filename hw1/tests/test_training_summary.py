@@ -1,13 +1,14 @@
 """Rendered startup summaries describe the effective run, not ignored inputs."""
 
-import re
 from io import StringIO
 from pathlib import Path
 
 from hw1_imitation.model import PolicyConfig, build_policy
 from hw1_imitation.randomness import RandomStreamFactory, StreamId
-from hw1_imitation.train import TrainConfig, build_training_summary, parse_train_config
+from hw1_imitation.train import TrainConfig, build_training_summary
 from rich.console import Console
+
+from .summary_helpers import summary_row_value
 
 
 class TestTrainingSummary:
@@ -44,29 +45,34 @@ class TestTrainingSummary:
         )
         return output.getvalue()
 
-    def test_default_summary_and_cli(self):
-        assert parse_train_config([]).show_summary
-        assert not parse_train_config(["--no-show-summary"]).show_summary
+    def test_default_summary_reports_effective_values(self):
         rendered = self.render(
-            self.summary(config=TrainConfig(eval_episodes=5, final_eval_episodes=50))
+            self.summary(
+                config=TrainConfig(
+                    num_epochs=7,
+                    eval_interval=123,
+                    eval_episodes=5,
+                    final_eval_episodes=50,
+                )
+            )
         )
-        for expected in (
-            "Push-T · Training summary",
-            "MSE · initialized from scratch",
-            "137,232 trainable",
-            "165 train / 41 validation",
-            "20,480",
-            "5,170",
-            "64,000 optimizer steps",
-            "Computed from training episodes",
-            "Best 3 + latest",
-            "[blue]literal[/blue]",
-        ):
-            assert expected in rendered
-        assert re.search(
-            "Rollout evaluation\\s*│\\s*Every 10,000 steps · 5 episodes", rendered
-        )
-        assert re.search("Final evaluation\\s*│\\s*50 episodes", rendered)
+        expected = {
+            "Policy": "MSE",
+            "Parameters": "137,232",
+            "Episodes": "165 train / 41 validation",
+            "Training samples": "20,480",
+            "Validation samples": "5,170",
+            "Training budget": "1,120 optimizer steps",
+            "Normalization": "training episodes",
+            "Checkpoints": "Best 3",
+            "Final evaluation": "50 episodes",
+        }
+        for label, value in expected.items():
+            assert value in summary_row_value(rendered, label)
+        rollout = summary_row_value(rendered, "Rollout evaluation")
+        assert "123 steps" in rollout
+        assert "5 episodes" in rollout
+        assert "[blue]literal[/blue]" in rendered
         assert "Flow sampling" not in rendered
         assert "\x1b" not in rendered
 
@@ -105,7 +111,8 @@ class TestTrainingSummary:
             )
         )
         rendered = self.render(summary)
-        assert rendered.count("Disabled") == 4
+        for label in ("CSV logging", "W&B", "Checkpoints", "Videos"):
+            assert summary_row_value(rendered, label) == "Disabled"
         assert "cs285-hw1" not in rendered
         assert "Best 3" not in rendered
         enabled = dict(
@@ -116,8 +123,8 @@ class TestTrainingSummary:
             ),
         )
         rendered = self.render(enabled)
-        assert "Latest only" in rendered
-        assert "Up to 150 episodes" in rendered
+        assert "Latest only" in summary_row_value(rendered, "Checkpoints")
+        assert "150 episodes" in summary_row_value(rendered, "Videos")
 
     def test_narrow_terminal_wraps_without_losing_values(self):
         summary = self.summary()
