@@ -1,0 +1,44 @@
+name: HW1 CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hw1-checks:
+    # Keep this name stable: the main branch requires this status check.
+    name: HW1 checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: hw1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.8"
+          enable-cache: true
+          cache-dependency-glob: hw1/uv.lock
+      - name: Install Python from .python-version
+        run: uv python install
+      - name: Install locked dependencies
+        run: uv sync --locked --dev
+      - name: Lint
+        run: uv run --no-sync ruff check src tests
+      - name: Check test formatting
+        run: uv run --no-sync ruff format --check tests
+      - name: Run tests
+        run: uv run --no-sync pytest -v -rs
