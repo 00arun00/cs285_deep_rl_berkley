@@ -29,6 +29,17 @@ def zero_policy(policy_type, *, state_dim=3, action_dim=1, horizon=2):
 @pytest.mark.parametrize("batch_size", [1, 2, 3, 5, 8])
 @pytest.mark.parametrize("training", [False, True], ids=["eval-mode", "train-mode"])
 def test_validation_loss_weights_examples_not_batches(batch_size, training):
+    """Validation gives each example equal weight across batch partitions.
+
+    Protects:
+        A short final batch cannot change the reported mean and the caller model
+        mode is restored.
+    Value:
+        Catches biased validation scores that can mislead model comparison.
+    Approach:
+        Use a real zero-output policy and analytically known errors under several
+        batch sizes.
+    """
     policy = zero_policy("mse")
     policy.train(training)
     # The zero policy's squared errors sum to 250 over ten action elements:
@@ -52,6 +63,8 @@ def test_validation_loss_weights_examples_not_batches(batch_size, training):
 
 @pytest.mark.parametrize("training", [False, True], ids=["eval-mode", "train-mode"])
 def test_empty_validation_has_no_numeric_mean(training):
+    """Prevents an empty validation split from reporting a misleading score or changing
+    model mode."""
     policy = zero_policy("mse")
     policy.train(training)
     loader = DataLoader(
@@ -110,6 +123,18 @@ class ScriptedRewardsEnv(gym.Env):
 @example(rewards=[[-4, -1, -3], [-7]])
 @example(rewards=[[0]])
 def test_evaluation_score_is_mean_of_episode_maxima(end_signal, rewards):
+    """Rollout scoring weights each episode maximum equally.
+
+    Protects:
+        Termination type, episode length, and negative rewards cannot change the
+        score definition.
+    Value:
+        Catches last-reward, zero-clamping, or timestep-weighted scores that misrank
+        policies.
+    Approach:
+        Script only environment rewards and compare the real rollout loop with a
+        direct oracle.
+    """
     env = ScriptedRewardsEnv(rewards, end_signal)
     policy = zero_policy("mse")
     normalizer = Normalizer(
@@ -145,6 +170,17 @@ def test_evaluation_score_is_mean_of_episode_maxima(end_signal, rewards):
 def test_flow_integration_matches_constant_velocity_solution(
     batch_size, horizon, action_dim, num_steps, field
 ):
+    """Flow sampling integrates a known velocity field over unit time.
+
+    Protects:
+        Zero and constant fields produce the analytical endpoint for every tested
+        step count.
+    Value:
+        Catches missing updates, incorrect step scaling, and action reshape errors.
+    Approach:
+        Configure a real linear policy and compare against initial noise plus
+        constant velocity.
+    """
     policy = zero_policy("flow", horizon=horizon, action_dim=action_dim)
     # With no hidden layers and all weights zero, the sole bias is the constant
     # output velocity. Configure real parameters rather than replacing _forward.

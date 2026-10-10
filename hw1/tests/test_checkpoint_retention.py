@@ -74,6 +74,18 @@ class TestCheckpointRetention:
         }
 
     def test_best_three_plus_latest_and_ties(self):
+        """Retention preserves best policies and the latest recovery point.
+
+        Protects:
+            Earlier ties win and remote aliases follow the retained best and latest
+            checkpoints.
+        Value:
+            Catches premature deletion of useful weights as scores improve or
+            decline.
+        Approach:
+            Use a readable score history with real files and a simulated external
+            artifact service.
+        """
         for step, score in enumerate([0.9, 0.8, 0.7, 0.1, 0.7], start=1):
             self.save(step, score)
         assert set(self.checkpoints) == {1, 2, 3, 5}
@@ -87,6 +99,8 @@ class TestCheckpointRetention:
         assert self.aliases == {"best": 6, "latest": 6}
 
     def test_zero_keeps_only_latest(self):
+        """Keeps the zero-retention option usable without accumulating files or a best
+        alias."""
         self.save(1, 1.0, top_k=0)
         self.save(2, 0.1, top_k=0)
         assert set(self.checkpoints) == {2}
@@ -94,6 +108,17 @@ class TestCheckpointRetention:
         assert self.aliases == {"latest": 2}
 
     def test_failed_upload_does_not_prune(self):
+        """Upload failure preserves the previously committed retention state.
+
+        Protects:
+            Existing files, aliases, and records survive until replacement upload
+            completes.
+        Value:
+            Prevents losing the last remote recovery point during a failed upload.
+        Approach:
+            Fail the artifact completion boundary and observe local files and
+            service calls.
+        """
         self.save(1, 1.0, top_k=0)
         before = dict(self.checkpoints)
         aliases_before = dict(self.aliases)
@@ -116,6 +141,17 @@ class TestCheckpointRetention:
         self.artifacts[1].delete.assert_not_called()
 
     def test_failed_remote_cleanup_retries_without_retaining_local_file(self, caplog):
+        """Remote cleanup failure remains retryable after local deletion.
+
+        Protects:
+            Failed remote deletion stays tracked and is retried on the next save.
+        Value:
+            Prevents remote storage leaks from being forgotten after the local copy
+            is removed.
+        Approach:
+            Toggle deletion failure in the service fake and inspect retry state
+            through recovery.
+        """
         self.save(1, 1.0, top_k=0)
         self.artifacts[1].delete.side_effect = RuntimeError("network unavailable")
         caplog.clear()
@@ -130,6 +166,18 @@ class TestCheckpointRetention:
         assert self.artifacts[1].delete.call_count == 2
 
     def test_failed_local_cleanup_retries_before_remote_deletion(self, caplog):
+        """Local cleanup failures retain enough state for a later retry.
+
+        Protects:
+            Remote deletion waits for successful local cleanup and errors are
+            reported.
+        Value:
+            Prevents cleanup failures from silently abandoning files or losing retry
+            records.
+        Approach:
+            Inject a filesystem deletion error, restore the operation, and save
+            again.
+        """
         self.save(1, 1.0, top_k=0)
         caplog.clear()
         with (
@@ -148,6 +196,18 @@ class TestCheckpointRetention:
 
     @pytest.mark.parametrize("top_k,expected", ((0, {5}), (3, {1, 2, 3, 5})))
     def test_local_only_retention_does_not_use_global_wandb_run(self, top_k, expected):
+        """Local retention remains independent of ambient W&B state.
+
+        Protects:
+            An unrelated global run cannot trigger uploads or alter the local
+            retention budget.
+        Value:
+            Catches accidental network activity and artifacts being attached to
+            another experiment.
+        Approach:
+            Install an ambient run sentinel while calling the public local-only save
+            path.
+        """
         self.checkpoints = {}
         checkpoint_dir = self.root / f"local-{top_k}"
         with patch.object(evaluation.wandb, "run", self.run):
@@ -183,6 +243,8 @@ class TestCheckpointRetention:
         ],
     )
     def test_invalid_inputs_do_not_save(self, score, top_k, offline, message):
+        """Ensures invalid retention requests fail before creating files or remote
+        artifacts."""
         self.run.offline = offline
         with patch.object(evaluation, "save_policy") as save:
             with pytest.raises(ValueError, match=message):

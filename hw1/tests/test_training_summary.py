@@ -46,6 +46,8 @@ class TestTrainingSummary:
         return output.getvalue()
 
     def test_default_summary_reports_effective_values(self):
+        """Catches misleading run budgets and accidental markup interpretation in startup
+        output."""
         rendered = self.render(
             self.summary(
                 config=TrainConfig(
@@ -77,6 +79,8 @@ class TestTrainingSummary:
         assert "\x1b" not in rendered
 
     def test_loaded_flow_uses_actual_architecture(self):
+        """Prevents ignored new-model flags from misrepresenting a loaded policy in the
+        summary."""
         summary = self.summary(
             config=TrainConfig(
                 init_from=Path("/tmp/policy.pt"),
@@ -102,6 +106,8 @@ class TestTrainingSummary:
         assert "Computed from training episodes" not in rendered
 
     def test_disabled_outputs_and_configured_video_count(self):
+        """Keeps the displayed output settings consistent with the requested storage and
+        video budget."""
         summary = self.summary(
             config=TrainConfig(
                 log_csv=False,
@@ -127,6 +133,8 @@ class TestTrainingSummary:
         assert "150 episodes" in summary_row_value(rendered, "Videos")
 
     def test_narrow_terminal_wraps_without_losing_values(self):
+        """Catches clipping of run information on narrow terminals without fixing
+        whitespace layout."""
         summary = self.summary()
         wide = self.render(summary, width=110)
         narrow = self.render(summary, width=50)

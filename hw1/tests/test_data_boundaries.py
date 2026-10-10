@@ -76,6 +76,18 @@ def assert_samples(dataset, expected):
 def test_single_episode_windows_and_index_bounds(
     pad, length, horizon, state_dim, action_dim
 ):
+    """Episode windows retain their timestep alignment at boundary horizons.
+
+    Protects:
+        Padding repeats the final action, unpadded windows stay complete, and
+        indices stay bounded.
+    Value:
+        Catches off-by-one targets and invalid samples for episodes shorter than the
+        action horizon.
+    Approach:
+        Compare the dataset layer against direct source-array enumeration over
+        generated shapes.
+    """
     episode = tagged_episode(0, length, state_dim, action_dim)
     dataset = SingleEpisodeChunks(episode, chunk_length=horizon, pad_action_chunk=pad)
     assert_samples(dataset, reference_samples([episode], horizon, pad))
@@ -99,6 +111,17 @@ def test_single_episode_windows_and_index_bounds(
 def test_combined_windows_never_cross_episode_boundaries(
     pad, lengths, horizon, state_dim, action_dim
 ):
+    """Combined datasets preserve episode-local action targets.
+
+    Protects:
+        Global indices select the right episode even when some episodes have no
+        complete windows.
+    Value:
+        Prevents training on action chunks stitched from unrelated demonstrations.
+    Approach:
+        Use tagged episodes and a direct enumeration oracle across varied lengths
+        and horizons.
+    """
     episodes = [
         tagged_episode(i, length, state_dim, action_dim)
         for i, length in enumerate(lengths)
@@ -133,6 +156,18 @@ def test_combined_windows_never_cross_episode_boundaries(
 def test_returned_tensors_and_dataset_construction_preserve_source_storage(
     combined, pad, normalize, data, length, state_dim, action_dim
 ):
+    """Dataset consumers cannot mutate demonstrations through returned tensors.
+
+    Protects:
+        Raw and normalized windows remain independent of source arrays and
+        overlapping neighbors.
+    Value:
+        In-place batch processing must not corrupt later samples or the
+        demonstration corpus.
+    Approach:
+        Mutate a generated sample and recheck every window against untouched source
+        copies.
+    """
     horizon = data.draw(st.integers(1, 10 if pad else length), label="horizon")
     episodes = [
         tagged_episode(i, length, state_dim, action_dim)
@@ -199,6 +234,18 @@ def load_packed_dataset(states, actions, episode_ends):
 @example(lengths=[1], state_dim=1, action_dim=1)
 @example(lengths=[1, 4, 1, 3], state_dim=3, action_dim=2)
 def test_packed_dataset_reconstructs_aligned_episodes(lengths, state_dim, action_dim):
+    """Packed demonstration stores reconstruct aligned source episodes.
+
+    Protects:
+        Exclusive end offsets account for every state/action timestep exactly once
+        and in order.
+    Value:
+        Catches dropped or misassigned demonstrations at the storage-to-dataset
+        boundary.
+    Approach:
+        Write small real Zarr stores per generated example and use only the public
+        loader.
+    """
     originals = [
         tagged_episode(i, length, state_dim, action_dim)
         for i, length in enumerate(lengths)
@@ -229,6 +276,18 @@ def test_packed_dataset_reconstructs_aligned_episodes(lengths, state_dim, action
 @settings(max_examples=40, deadline=None)
 @given(lengths=st.lists(st.integers(2, 8), min_size=3, max_size=5))
 def test_packed_dataset_rejects_invalid_episode_boundaries(corruption, lengths):
+    """Malformed packed episode offsets fail during loading.
+
+    Protects:
+        Offsets are positive, strictly increasing, and terminate exactly at the
+        packed data end.
+    Value:
+        Prevents silent data loss or mixing of episodes from malformed demonstration
+        metadata.
+    Approach:
+        Corrupt one offset property in real stores while keeping all other input
+        shapes valid.
+    """
     total = sum(lengths)
     states = np.arange(total * 3, dtype=np.float32).reshape(total, 3)
     actions = np.arange(total * 2, dtype=np.float32).reshape(total, 2)
@@ -249,6 +308,7 @@ def test_packed_dataset_rejects_invalid_episode_boundaries(corruption, lengths):
 
 
 def test_packed_dataset_rejects_empty_input():
+    """Rejects empty demonstration stores before they can enter training."""
     with pytest.raises(ValueError):
         load_packed_dataset(
             np.empty((0, 3), dtype=np.float32),
@@ -258,6 +318,7 @@ def test_packed_dataset_rejects_empty_input():
 
 
 def test_episode_rejects_empty_timesteps():
+    """Prevents empty episodes from reaching padding code that needs a final action."""
     with pytest.raises(ValueError):
         Episode(
             0, np.empty((0, 3), dtype=np.float32), np.empty((0, 2), dtype=np.float32)
@@ -265,6 +326,7 @@ def test_episode_rejects_empty_timesteps():
 
 
 def test_chunk_dataset_rejects_empty_episode_collection():
+    """Rejects a missing training corpus at dataset construction."""
     with pytest.raises(ValueError):
         EpisodeChunkDataset([], chunk_length=1)
 
@@ -275,6 +337,7 @@ def test_chunk_dataset_rejects_empty_episode_collection():
     ids=["different-state-dimensions", "different-action-dimensions"],
 )
 def test_chunk_dataset_rejects_inconsistent_feature_dimensions(state_dim, action_dim):
+    """Rejects incompatible episode features before batching fails during training."""
     episodes = [tagged_episode(0, 3, 3, 2), tagged_episode(1, 3, state_dim, action_dim)]
     with pytest.raises(ValueError):
         EpisodeChunkDataset(episodes, chunk_length=1)

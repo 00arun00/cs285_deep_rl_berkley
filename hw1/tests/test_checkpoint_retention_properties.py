@@ -115,6 +115,18 @@ def assert_aliases(service, history, top_k, latest):
 def test_retention_matches_full_history_after_every_save(
     remote, scores, top_k, step_gap
 ):
+    """Retention agrees with the best-K-plus-latest contract across histories.
+
+    Protects:
+        Files, records, and remote aliases agree after every save, including ties
+        and sparse steps.
+    Value:
+        Catches ranking errors beyond the hand-picked histories in the service unit
+        tests.
+    Approach:
+        Compare real saves with an independent full-history ranking oracle and a
+        small service fake.
+    """
     policy, stats = make_policy_and_stats()
     service = ArtifactService()
     records, history, paths = {}, {}, {}
@@ -166,6 +178,18 @@ def test_retention_matches_full_history_after_every_save(
 def test_cleanup_failures_preserve_retry_state_until_recovery(
     failure_target, events, top_k
 ):
+    """Intermittent cleanup failures converge to the correct retained set.
+
+    Protects:
+        Pending deletions remain tracked across repeated failures and clear after
+        recovery.
+    Value:
+        Catches multi-save storage leaks that a single failure-and-retry example
+        cannot expose.
+    Approach:
+        Generate score/failure histories with separate local and remote faults and a
+        healthy final save.
+    """
     policy, stats = make_policy_and_stats()
     service = ArtifactService()
     records, history, paths = {}, {}, {}
