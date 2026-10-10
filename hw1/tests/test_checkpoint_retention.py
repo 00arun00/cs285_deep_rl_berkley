@@ -1,18 +1,17 @@
 """Retention behavior with local files and a simulated W&B artifact service."""
 
-import tempfile
-import unittest
+import logging
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import pytest
 from hw1_imitation import evaluation
 
 
-class CheckpointRetentionTests(unittest.TestCase):
-    def setUp(self):
-        directory = tempfile.TemporaryDirectory()
-        self.addCleanup(directory.cleanup)
-        self.root = Path(directory.name)
+class TestCheckpointRetention:
+    @pytest.fixture(autouse=True)
+    def retention_service(self, tmp_path, monkeypatch):
+        self.root = tmp_path
         self.run = Mock(dir=str(self.root), id="test", offline=False)
         self.checkpoints = {}
         self.artifacts = {}
@@ -31,28 +30,24 @@ class CheckpointRetentionTests(unittest.TestCase):
                 # No existing retained file may disappear before upload succeeds.
                 for record in self.checkpoints.values():
                     if record.path.exists():
-                        self.assertEqual(record.path.read_bytes(), b"checkpoint")
+                        assert record.path.read_bytes() == b"checkpoint"
                 if self.upload_error:
                     raise self.upload_error
                 for alias in aliases:
                     self.aliases[alias] = step
 
             def delete():
-                self.assertNotIn(step, self.aliases.values())
+                assert step not in self.aliases.values()
 
             artifact.wait.side_effect = wait
             artifact.delete.side_effect = delete
             return artifact
 
         self.run.log_artifact.side_effect = log_artifact
-        for patcher in (
-            patch.object(
-                evaluation.wandb, "Artifact", side_effect=lambda **kw: Mock(**kw)
-            ),
-            patch.object(evaluation, "save_policy", side_effect=save_policy),
-        ):
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        monkeypatch.setattr(
+            evaluation.wandb, "Artifact", Mock(side_effect=lambda **kw: Mock(**kw))
+        )
+        monkeypatch.setattr(evaluation, "save_policy", save_policy)
 
     def save(self, step, score, top_k=3):
         return evaluation.save_checkpoint_and_retain(
@@ -76,96 +71,94 @@ class CheckpointRetentionTests(unittest.TestCase):
     def test_best_three_plus_latest_and_ties(self):
         for step, score in enumerate([0.9, 0.8, 0.7, 0.1, 0.7], start=1):
             self.save(step, score)
-        self.assertEqual(set(self.checkpoints), {1, 2, 3, 5})
-        self.assertEqual(self.local_steps(), {1, 2, 3, 5})
+        assert set(self.checkpoints) == {1, 2, 3, 5}
+        assert self.local_steps() == {1, 2, 3, 5}
         self.artifacts[4].delete.assert_called_once_with()
-        self.assertEqual(self.aliases, {"best": 1, "latest": 5})
+        assert self.aliases == {"best": 1, "latest": 5}
 
         self.save(6, 1.0)
-        self.assertEqual(set(self.checkpoints), {1, 2, 6})
-        self.assertEqual(self.local_steps(), {1, 2, 6})
-        self.assertEqual(self.aliases, {"best": 6, "latest": 6})
+        assert set(self.checkpoints) == {1, 2, 6}
+        assert self.local_steps() == {1, 2, 6}
+        assert self.aliases == {"best": 6, "latest": 6}
 
     def test_zero_keeps_only_latest(self):
         self.save(1, 1.0, top_k=0)
         self.save(2, 0.1, top_k=0)
-        self.assertEqual(set(self.checkpoints), {2})
-        self.assertEqual(self.local_steps(), {2})
-        self.assertEqual(self.aliases, {"latest": 2})
+        assert set(self.checkpoints) == {2}
+        assert self.local_steps() == {2}
+        assert self.aliases == {"latest": 2}
 
     def test_failed_upload_does_not_prune(self):
         self.save(1, 1.0, top_k=0)
         self.upload_error = RuntimeError("upload failed")
-        with self.assertRaisesRegex(RuntimeError, "upload failed"):
+        with pytest.raises(RuntimeError, match="upload failed"):
             self.save(2, 0.1, top_k=0)
-        self.assertEqual(set(self.checkpoints), {1})
-        self.assertEqual(self.local_steps(), {1, 2})
+        assert set(self.checkpoints) == {1}
+        assert self.local_steps() == {1, 2}
         self.artifacts[1].delete.assert_not_called()
 
-    def test_failed_remote_cleanup_retries_without_retaining_local_file(self):
+    def test_failed_remote_cleanup_retries_without_retaining_local_file(self, caplog):
         self.save(1, 1.0, top_k=0)
         self.artifacts[1].delete.side_effect = RuntimeError("network unavailable")
-        with self.assertLogs(level="ERROR"):
-            self.assertEqual(self.save(2, 0.1, top_k=0), {1})
-        self.assertEqual(set(self.checkpoints), {1, 2})
-        self.assertEqual(self.local_steps(), {2})
+        caplog.clear()
+        with caplog.at_level("ERROR"):
+            assert self.save(2, 0.1, top_k=0) == {1}
+        assert any(record.levelno >= logging.ERROR for record in caplog.records)
+        assert set(self.checkpoints) == {1, 2}
+        assert self.local_steps() == {2}
         self.artifacts[1].delete.side_effect = None
-        self.assertEqual(self.save(3, 0.2, top_k=0), set())
-        self.assertEqual(set(self.checkpoints), {3})
-        self.assertEqual(self.artifacts[1].delete.call_count, 2)
+        assert self.save(3, 0.2, top_k=0) == set()
+        assert set(self.checkpoints) == {3}
+        assert self.artifacts[1].delete.call_count == 2
 
-    def test_failed_local_cleanup_retries_before_remote_deletion(self):
+    def test_failed_local_cleanup_retries_before_remote_deletion(self, caplog):
         self.save(1, 1.0, top_k=0)
+        caplog.clear()
         with (
             patch.object(Path, "unlink", side_effect=OSError("permission denied")),
-            self.assertLogs(level="ERROR"),
+            caplog.at_level("ERROR"),
         ):
-            self.assertEqual(self.save(2, 0.1, top_k=0), {1})
-        self.assertEqual(self.local_steps(), {1, 2})
+            assert self.save(2, 0.1, top_k=0) == {1}
+        assert any(record.levelno >= logging.ERROR for record in caplog.records)
+        assert self.local_steps() == {1, 2}
         self.artifacts[1].delete.assert_not_called()
 
-        self.assertEqual(self.save(3, 0.2, top_k=0), set())
-        self.assertEqual(self.local_steps(), {3})
-        self.assertEqual(set(self.checkpoints), {3})
+        assert self.save(3, 0.2, top_k=0) == set()
+        assert self.local_steps() == {3}
+        assert set(self.checkpoints) == {3}
         self.artifacts[1].delete.assert_called_once_with()
 
-    def test_local_only_retention_does_not_use_global_wandb_run(self):
-        for top_k, expected in ((0, {5}), (3, {1, 2, 3, 5})):
-            with self.subTest(top_k=top_k):
-                self.checkpoints = {}
-                checkpoint_dir = self.root / f"local-{top_k}"
-                with patch.object(evaluation.wandb, "run", self.run):
-                    for step, score in enumerate([0.9, 0.8, 0.7, 0.1, 0.7], 1):
-                        pending = evaluation.save_checkpoint_and_retain(
-                            Mock(),
-                            step,
-                            checkpoint_dir=checkpoint_dir,
-                            normalizer=Mock(),
-                            flow_num_steps=10,
-                            mean_reward=score,
-                            top_k=top_k,
-                            checkpoints=self.checkpoints,
-                        )
-                        self.assertEqual(pending, set())
-                self.assertEqual(set(self.checkpoints), expected)
-                self.assertEqual(
-                    {
-                        int(p.stem.removeprefix("policy_step_"))
-                        for p in checkpoint_dir.glob("*.pt")
-                    },
-                    expected,
+    @pytest.mark.parametrize("top_k,expected", ((0, {5}), (3, {1, 2, 3, 5})))
+    def test_local_only_retention_does_not_use_global_wandb_run(self, top_k, expected):
+        self.checkpoints = {}
+        checkpoint_dir = self.root / f"local-{top_k}"
+        with patch.object(evaluation.wandb, "run", self.run):
+            for step, score in enumerate([0.9, 0.8, 0.7, 0.1, 0.7], 1):
+                pending = evaluation.save_checkpoint_and_retain(
+                    Mock(),
+                    step,
+                    checkpoint_dir=checkpoint_dir,
+                    normalizer=Mock(),
+                    flow_num_steps=10,
+                    mean_reward=score,
+                    top_k=top_k,
+                    checkpoints=self.checkpoints,
                 )
-                self.assertTrue(
-                    all(r.artifact is None for r in self.checkpoints.values())
-                )
+                assert pending == set()
+        assert set(self.checkpoints) == expected
+        assert {
+            int(p.stem.removeprefix("policy_step_"))
+            for p in checkpoint_dir.glob("*.pt")
+        } == expected
+        assert all((r.artifact is None for r in self.checkpoints.values()))
         self.run.log_artifact.assert_not_called()
         evaluation.wandb.Artifact.assert_not_called()
 
     def test_invalid_inputs_do_not_save(self):
         for score in (float("nan"), float("inf")):
-            with self.assertRaisesRegex(ValueError, "finite"):
+            with pytest.raises(ValueError, match="finite"):
                 self.save(1, score)
         self.run.offline = True
-        with self.assertRaisesRegex(ValueError, "online"):
+        with pytest.raises(ValueError, match="online"):
             self.save(1, 0.5)
-        self.assertFalse((self.root / "checkpoints").exists())
+        assert not (self.root / "checkpoints").exists()

@@ -1,17 +1,16 @@
 """Rendered startup summaries describe the effective run, not ignored inputs."""
 
+import re
 from io import StringIO
 from pathlib import Path
-import unittest
-
-from rich.console import Console
 
 from hw1_imitation.model import PolicyConfig, build_policy
 from hw1_imitation.randomness import RandomStreamFactory, StreamId
 from hw1_imitation.train import TrainConfig, build_training_summary, parse_train_config
+from rich.console import Console
 
 
-class TrainingSummaryTests(unittest.TestCase):
+class TestTrainingSummary:
     def summary(self, config=None, policy_type="mse"):
         return dict(
             config=config or TrainConfig(),
@@ -46,8 +45,8 @@ class TrainingSummaryTests(unittest.TestCase):
         return output.getvalue()
 
     def test_default_summary_and_cli(self):
-        self.assertTrue(parse_train_config([]).show_summary)
-        self.assertFalse(parse_train_config(["--no-show-summary"]).show_summary)
+        assert parse_train_config([]).show_summary
+        assert not parse_train_config(["--no-show-summary"]).show_summary
         rendered = self.render(
             self.summary(config=TrainConfig(eval_episodes=5, final_eval_episodes=50))
         )
@@ -63,13 +62,13 @@ class TrainingSummaryTests(unittest.TestCase):
             "Best 3 + latest",
             "[blue]literal[/blue]",
         ):
-            self.assertIn(expected, rendered)
-        self.assertRegex(
-            rendered, r"Rollout evaluation\s*│\s*Every 10,000 steps · 5 episodes"
+            assert expected in rendered
+        assert re.search(
+            "Rollout evaluation\\s*│\\s*Every 10,000 steps · 5 episodes", rendered
         )
-        self.assertRegex(rendered, r"Final evaluation\s*│\s*50 episodes")
-        self.assertNotIn("Flow sampling", rendered)
-        self.assertNotIn("\x1b", rendered)
+        assert re.search("Final evaluation\\s*│\\s*50 episodes", rendered)
+        assert "Flow sampling" not in rendered
+        assert "\x1b" not in rendered
 
     def test_loaded_flow_uses_actual_architecture(self):
         summary = self.summary(
@@ -92,9 +91,9 @@ class TrainingSummaryTests(unittest.TestCase):
             "7 steps",
             "Loaded from checkpoint",
         ):
-            self.assertIn(expected, rendered)
-        self.assertNotIn("MSE", rendered)
-        self.assertNotIn("Computed from training episodes", rendered)
+            assert expected in rendered
+        assert "MSE" not in rendered
+        assert "Computed from training episodes" not in rendered
 
     def test_disabled_outputs_and_configured_video_count(self):
         summary = self.summary(
@@ -106,9 +105,9 @@ class TrainingSummaryTests(unittest.TestCase):
             )
         )
         rendered = self.render(summary)
-        self.assertEqual(rendered.count("Disabled"), 4)
-        self.assertNotIn("cs285-hw1", rendered)
-        self.assertNotIn("Best 3", rendered)
+        assert rendered.count("Disabled") == 4
+        assert "cs285-hw1" not in rendered
+        assert "Best 3" not in rendered
         enabled = dict(
             summary,
             config=TrainConfig(
@@ -117,14 +116,14 @@ class TrainingSummaryTests(unittest.TestCase):
             ),
         )
         rendered = self.render(enabled)
-        self.assertIn("Latest only", rendered)
-        self.assertIn("Up to 150 episodes", rendered)
+        assert "Latest only" in rendered
+        assert "Up to 150 episodes" in rendered
 
     def test_narrow_terminal_wraps_without_losing_values(self):
         summary = self.summary()
         wide = self.render(summary, width=110)
         narrow = self.render(summary, width=50)
-        self.assertTrue(all(len(line) <= 50 for line in narrow.splitlines()))
+        assert all((len(line) <= 50 for line in narrow.splitlines()))
 
         def content(text):
             return "".join(
@@ -133,4 +132,4 @@ class TrainingSummaryTests(unittest.TestCase):
                 if not char.isspace() and char not in "╭╮╰╯─│├┤┬┴┼"
             )
 
-        self.assertEqual(content(wide), content(narrow))
+        assert content(wide) == content(narrow)

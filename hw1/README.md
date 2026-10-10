@@ -179,8 +179,15 @@ This workflow does not attempt to reproduce an interrupted training trajectory.
 
 ```bash
 uv run src/hw1_imitation/train.py --help
-uv run python -m unittest discover -s tests -v
+uv run pytest -v
 ```
 
-Tests cover policy round trips and further training on CPU with mocked rollout
-evaluation and W&B services. They do not exercise GPU training or remote uploads.
+All tests use pytest, with parameterized cases for policy variants, output
+combinations, and invalid inputs.
+To run only the flow checkpoint variants, use
+`uv run pytest tests/test_checkpoint.py -k flow -v`.
+
+Tests cover policy round trips, training, evaluation budgets, logging, checkpoint
+retention, and random-stream isolation. Data access, physics environments, and W&B
+services are mocked. An accelerator transfer test runs when hardware is available;
+the suite does not exercise GPU training or remote uploads.

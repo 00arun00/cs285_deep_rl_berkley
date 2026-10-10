@@ -4,8 +4,6 @@ These tests check reproducibility and isolation, not statistical independence
 or equivalence across devices and library versions.
 """
 
-import tempfile
-import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
@@ -13,8 +11,8 @@ from unittest.mock import patch
 
 import gymnasium as gym
 import numpy as np
+import pytest
 import torch
-
 from hw1_imitation import evaluation, train
 from hw1_imitation.checkpoint import load_policy, save_policy
 from hw1_imitation.data import Episode, EpisodesDataset, Normalizer
@@ -70,39 +68,37 @@ class TinyEnv(gym.Env):
         return observation, 0.0, done, False, {}
 
 
-class RandomStreamTests(unittest.TestCase):
+class TestRandomStream:
     def test_existing_seed_identities_remain_stable(self) -> None:
         # These are compatibility fixtures, not recomputed expected values.
         # Changing an ID or encoding must not silently change existing runs.
-        self.assertEqual(
-            RandomStreamFactory(42).seed(StreamId.DATA_SPLIT),
-            18311551174447640683,
-        )
-        self.assertEqual(
+        assert RandomStreamFactory(42).seed(StreamId.DATA_SPLIT) == 18311551174447640683
+        assert (
             RandomStreamFactory(2**80 + 42).seed(
                 StreamId.EVAL_ENV, variation=3, index=7
-            ),
-            9736090538303049478,
+            )
+            == 9736090538303049478
         )
 
-    def test_fresh_generators_replay_and_retained_generators_advance(self) -> None:
+    @pytest.mark.parametrize("backend", ("numpy", "torch"))
+    def test_fresh_generators_replay_and_retained_generators_advance(
+        self, backend
+    ) -> None:
         streams = RandomStreamFactory(42)
-        for backend in ("numpy", "torch"):
-            with self.subTest(backend=backend):
-                create = getattr(streams, backend)
+        create = getattr(streams, backend)
 
-                def draw(generator):
-                    if backend == "numpy":
-                        return generator.standard_normal(8)
-                    return torch.randn(8, generator=generator).numpy()
+        def draw(generator):
+            if backend == "numpy":
+                return generator.standard_normal(8)
+            return torch.randn(8, generator=generator).numpy()
 
-                first = create(StreamId.TRAIN_LOSS, variation=3)
-                replay = create(StreamId.TRAIN_LOSS, variation=3)
-                first_draw = draw(first)
-                np.testing.assert_array_equal(first_draw, draw(replay))
-                second_draw = draw(first)
-                self.assertFalse(np.array_equal(first_draw, second_draw))
-                np.testing.assert_array_equal(second_draw, draw(replay))
+        first = create(StreamId.TRAIN_LOSS, variation=3)
+        replay = create(StreamId.TRAIN_LOSS, variation=3)
+        first_draw = draw(first)
+        np.testing.assert_array_equal(first_draw, draw(replay))
+        second_draw = draw(first)
+        assert not np.array_equal(first_draw, second_draw)
+        np.testing.assert_array_equal(second_draw, draw(replay))
 
     def test_episode_identities_survive_reordering_and_unrelated_draws(self) -> None:
         streams = RandomStreamFactory(42)
@@ -123,7 +119,7 @@ class RandomStreamTests(unittest.TestCase):
         torch.randn(100, generator=streams.torch(StreamId.TRAIN_LOSS))
         for index in (7, 0, 1):
             seed, noise = episode(index)
-            self.assertEqual(seed, expected[index][0])
+            assert seed == expected[index][0]
             torch.testing.assert_close(noise, expected[index][1], rtol=0, atol=0)
 
         # Catch an accidentally ignored coordinate; this is not a proof of
@@ -138,7 +134,7 @@ class RandomStreamTests(unittest.TestCase):
                 (42, StreamId.EVAL_ENV, 2, 8),
             )
         ]
-        self.assertEqual(len(set(seeds)), len(seeds))
+        assert len(set(seeds)) == len(seeds)
 
     def test_factory_consumers_leave_default_rngs_unchanged(self) -> None:
         numpy_before = np.random.get_state()
@@ -148,91 +144,92 @@ class RandomStreamTests(unittest.TestCase):
         torch.randn(32, generator=streams.torch(StreamId.TRAIN_LOSS))
         streams.seed(StreamId.EVAL_ENV, index=7)
         numpy_after = np.random.get_state()
-        self.assertEqual(numpy_before[0], numpy_after[0])
+        assert numpy_before[0] == numpy_after[0]
         np.testing.assert_array_equal(numpy_before[1], numpy_after[1])
-        self.assertEqual(numpy_before[2:], numpy_after[2:])
-        self.assertTrue(torch.equal(torch_before, torch.get_rng_state()))
+        assert numpy_before[2:] == numpy_after[2:]
+        assert torch.equal(torch_before, torch.get_rng_state())
 
-    def test_invalid_identities_fail_instead_of_being_coerced(self) -> None:
-        for value, error in ((True, TypeError), (1.5, TypeError), (-1, ValueError)):
-            with self.subTest(root=value), self.assertRaises(error):
-                RandomStreamFactory(value)
-        streams = RandomStreamFactory(42)
-        for method in (streams.validate, streams.seed, streams.numpy, streams.torch):
-            with self.subTest(method=method.__name__, stream="raw ID"):
-                with self.assertRaises(TypeError):
-                    method(int(StreamId.TRAIN_LOSS))
-            for coordinate in ("variation", "index"):
-                for value, error in (
-                    (True, TypeError),
-                    (1.5, TypeError),
-                    (-1, ValueError),
-                    (2**32, ValueError),
-                ):
-                    with (
-                        self.subTest(
-                            method=method.__name__, coordinate=coordinate, value=value
-                        ),
-                        self.assertRaises(error),
-                    ):
-                        method(StreamId.TRAIN_LOSS, **{coordinate: value})
+    @pytest.mark.parametrize(
+        "value,error", [(True, TypeError), (1.5, TypeError), (-1, ValueError)]
+    )
+    def test_invalid_root_seeds_fail_instead_of_being_coerced(self, value, error):
+        with pytest.raises(error):
+            RandomStreamFactory(value)
+
+    @pytest.mark.parametrize("method_name", ["validate", "seed", "numpy", "torch"])
+    def test_raw_stream_ids_are_rejected(self, method_name):
+        method = getattr(RandomStreamFactory(42), method_name)
+        with pytest.raises(TypeError):
+            method(int(StreamId.TRAIN_LOSS))
+
+    @pytest.mark.parametrize("method_name", ["validate", "seed", "numpy", "torch"])
+    @pytest.mark.parametrize("coordinate", ["variation", "index"])
+    @pytest.mark.parametrize(
+        "value,error",
+        [(True, TypeError), (1.5, TypeError), (-1, ValueError), (2**32, ValueError)],
+    )
+    def test_invalid_coordinates_fail_instead_of_being_coerced(
+        self, method_name, coordinate, value, error
+    ):
+        method = getattr(RandomStreamFactory(42), method_name)
+        with pytest.raises(error):
+            method(StreamId.TRAIN_LOSS, **{coordinate: value})
 
 
-class PolicyInitializationTests(unittest.TestCase):
-    def test_concurrent_initialization_matches_isolated_runs(self) -> None:
-        for policy_type in ("mse", "flow"):
-            with self.subTest(policy_type=policy_type):
-                config = PolicyConfig(
-                    policy_type=policy_type,
-                    state_dim=3,
-                    action_dim=2,
-                    chunk_size=1,
-                    hidden_dims=(4,),
+class TestPolicyInitialization:
+    @pytest.mark.parametrize("policy_type", ("mse", "flow"))
+    def test_concurrent_initialization_matches_isolated_runs(self, policy_type) -> None:
+        config = PolicyConfig(
+            policy_type=policy_type,
+            state_dim=3,
+            action_dim=2,
+            chunk_size=1,
+            hidden_dims=(4,),
+        )
+
+        def build(variation: int) -> BasePolicy:
+            return build_policy(
+                config,
+                cpu_generator=RandomStreamFactory(42).torch(
+                    StreamId.MODEL_INIT,
+                    variation=variation,
+                ),
+                target_device="cpu",
+            )
+
+        before = torch.get_rng_state().clone()
+        expected = [build(variation) for variation in (0, 1)]
+        assert torch.equal(before, torch.get_rng_state())
+
+        barrier = Barrier(2)
+
+        def concurrent_build(variation: int) -> BasePolicy:
+            barrier.wait(timeout=10)
+            return build(variation)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            actual = list(executor.map(concurrent_build, (0, 1)))
+
+        assert torch.equal(before, torch.get_rng_state())
+
+        for reference, result in zip(expected, actual):
+            assert result.training
+            for name, value in result.state_dict().items():
+                assert value.device == torch.device("cpu")
+                assert torch.isfinite(value).all().item()
+                torch.testing.assert_close(
+                    value,
+                    reference.state_dict()[name],
+                    rtol=0,
+                    atol=0,
                 )
 
-                def build(variation: int) -> BasePolicy:
-                    return build_policy(
-                        config,
-                        cpu_generator=RandomStreamFactory(42).torch(
-                            StreamId.MODEL_INIT,
-                            variation=variation,
-                        ),
-                        target_device="cpu",
-                    )
-
-                before = torch.get_rng_state().clone()
-                expected = [build(variation) for variation in (0, 1)]
-                self.assertTrue(torch.equal(before, torch.get_rng_state()))
-
-                barrier = Barrier(2)
-
-                def concurrent_build(variation: int) -> BasePolicy:
-                    barrier.wait(timeout=10)
-                    return build(variation)
-
-                with ThreadPoolExecutor(max_workers=2) as executor:
-                    actual = list(executor.map(concurrent_build, (0, 1)))
-
-                self.assertTrue(torch.equal(before, torch.get_rng_state()))
-
-                for reference, result in zip(expected, actual):
-                    self.assertTrue(result.training)
-                    for name, value in result.state_dict().items():
-                        self.assertEqual(value.device, torch.device("cpu"))
-                        self.assertTrue(torch.isfinite(value).all().item())
-                        torch.testing.assert_close(
-                            value,
-                            reference.state_dict()[name],
-                            rtol=0,
-                            atol=0,
-                        )
-
-                self.assertTrue(
-                    any(
-                        not torch.equal(value, expected[1].state_dict()[name])
-                        for name, value in expected[0].state_dict().items()
-                    )
-                )
+        assert any(
+            (
+                not torch.equal(value, expected[1].state_dict()[name])
+                for name, value in expected[0].state_dict().items()
+            )
+        )
 
     def test_initialization_advances_only_the_supplied_generator(self) -> None:
         generator = RandomStreamFactory(42).torch(StreamId.MODEL_INIT)
@@ -250,13 +247,13 @@ class PolicyInitializationTests(unittest.TestCase):
             cpu_generator=generator,
         )
 
-        self.assertFalse(torch.equal(generator_before, generator.get_state()))
-        self.assertTrue(torch.equal(default_before, torch.get_rng_state()))
+        assert not torch.equal(generator_before, generator.get_state())
+        assert torch.equal(default_before, torch.get_rng_state())
 
     def test_failed_construction_preserves_default_rng(self) -> None:
         before = torch.get_rng_state().clone()
 
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):
             build_policy(
                 PolicyConfig(
                     policy_type="mse",
@@ -269,12 +266,12 @@ class PolicyInitializationTests(unittest.TestCase):
                 ),
             )
 
-        self.assertTrue(torch.equal(before, torch.get_rng_state()))
+        assert torch.equal(before, torch.get_rng_state())
 
     def test_target_device_transfer_preserves_initialized_values(self) -> None:
         accelerator = torch.accelerator.current_accelerator()
         if accelerator is None or not torch.accelerator.is_available():
-            self.skipTest("No accelerator available")
+            pytest.skip("No accelerator available")
 
         config = PolicyConfig(
             policy_type="flow",
@@ -297,7 +294,7 @@ class PolicyInitializationTests(unittest.TestCase):
         actual = build(accelerator)
 
         for name, value in actual.state_dict().items():
-            self.assertEqual(value.device.type, accelerator.type)
+            assert value.device.type == accelerator.type
             torch.testing.assert_close(
                 value.cpu(),
                 reference.state_dict()[name],
@@ -306,58 +303,58 @@ class PolicyInitializationTests(unittest.TestCase):
             )
 
 
-class RandomnessIntegrationTests(unittest.TestCase):
-    def test_loading_and_initialization_can_run_concurrently(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "policy.pt"
-            reference = make_policy()
-            save_policy(path, reference, make_normalizer())
+class TestRandomnessIntegration:
+    def test_loading_and_initialization_can_run_concurrently(self, tmp_path) -> None:
+        path = tmp_path / "policy.pt"
+        reference = make_policy()
+        save_policy(path, reference, make_normalizer())
 
-            before = torch.get_rng_state().clone()
-            barrier = Barrier(2)
+        before = torch.get_rng_state().clone()
+        barrier = Barrier(2)
 
-            def initialize() -> BasePolicy:
-                barrier.wait(timeout=10)
-                return make_policy()
+        def initialize() -> BasePolicy:
+            barrier.wait(timeout=10)
+            return make_policy()
 
-            def load() -> BasePolicy:
-                barrier.wait(timeout=10)
-                model, _, _ = load_policy(path)
-                return model
+        def load() -> BasePolicy:
+            barrier.wait(timeout=10)
+            model, _, _ = load_policy(path)
+            return model
 
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                initialized_future = executor.submit(initialize)
-                loaded_future = executor.submit(load)
-                initialized = initialized_future.result()
-                loaded = loaded_future.result()
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            initialized_future = executor.submit(initialize)
+            loaded_future = executor.submit(load)
+            initialized = initialized_future.result()
+            loaded = loaded_future.result()
 
-            self.assertTrue(torch.equal(before, torch.get_rng_state()))
-            self.assertTrue(initialized.training)
-            self.assertFalse(loaded.training)
+        assert torch.equal(before, torch.get_rng_state())
+        assert initialized.training
+        assert not loaded.training
 
-            for result in (initialized, loaded):
-                for name, value in result.state_dict().items():
-                    torch.testing.assert_close(
-                        value,
-                        reference.state_dict()[name],
-                        rtol=0,
-                        atol=0,
-                    )
+        for result in (initialized, loaded):
+            for name, value in result.state_dict().items():
+                torch.testing.assert_close(
+                    value,
+                    reference.state_dict()[name],
+                    rtol=0,
+                    atol=0,
+                )
 
-    def test_loading_preserves_default_rng_even_when_weights_are_invalid(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "policy.pt"
-            save_policy(path, make_policy(), make_normalizer())
-            before = torch.get_rng_state().clone()
+    def test_loading_preserves_default_rng_even_when_weights_are_invalid(
+        self, tmp_path
+    ) -> None:
+        path = tmp_path / "policy.pt"
+        save_policy(path, make_policy(), make_normalizer())
+        before = torch.get_rng_state().clone()
+        load_policy(path)
+        assert torch.equal(before, torch.get_rng_state())
+
+        payload = torch.load(path, weights_only=True)
+        payload["model_state_dict"] = {}
+        torch.save(payload, path)
+        with pytest.raises(RuntimeError):
             load_policy(path)
-            self.assertTrue(torch.equal(before, torch.get_rng_state()))
-
-            payload = torch.load(path, weights_only=True)
-            payload["model_state_dict"] = {}
-            torch.save(payload, path)
-            with self.assertRaises(RuntimeError):
-                load_policy(path)
-            self.assertTrue(torch.equal(before, torch.get_rng_state()))
+        assert torch.equal(before, torch.get_rng_state())
 
     def test_later_episode_actions_do_not_depend_on_earlier_episode_length(
         self,
@@ -386,7 +383,13 @@ class RandomnessIntegrationTests(unittest.TestCase):
         )
         np.testing.assert_array_equal(short.actions[1], long.actions[1])
 
-    def test_monitoring_frequency_does_not_change_flow_training(self) -> None:
+    @pytest.mark.parametrize(
+        "name,validation_interval,eval_interval",
+        (("more_validation", 1, 100), ("more_evaluation", 100, 1)),
+    )
+    def test_monitoring_frequency_does_not_change_flow_training(
+        self, name, validation_interval, eval_interval, tmp_path
+    ) -> None:
         rng = np.random.default_rng(7)
         episodes = EpisodesDataset(
             tuple(
@@ -451,20 +454,12 @@ class RandomnessIntegrationTests(unittest.TestCase):
                 train.run_training(config)
             return losses, weights
 
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            expected_losses, expected_weights = run(root / "baseline", 100, 100)
-            self.assertEqual(len(expected_losses), 12)
-            for name, validation_interval, eval_interval in (
-                ("more_validation", 1, 100),
-                ("more_evaluation", 100, 1),
-            ):
-                with self.subTest(name=name):
-                    losses, weights = run(
-                        root / name, validation_interval, eval_interval
-                    )
-                    self.assertEqual(losses, expected_losses)
-                    for key in expected_weights:
-                        torch.testing.assert_close(
-                            weights[key], expected_weights[key], rtol=0, atol=0
-                        )
+        root = tmp_path
+        expected_losses, expected_weights = run(root / "baseline", 100, 100)
+        assert len(expected_losses) == 12
+        losses, weights = run(root / name, validation_interval, eval_interval)
+        assert losses == expected_losses
+        for key in expected_weights:
+            torch.testing.assert_close(
+                weights[key], expected_weights[key], rtol=0, atol=0
+            )
