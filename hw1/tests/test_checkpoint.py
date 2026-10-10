@@ -19,11 +19,13 @@ from hypothesis.extra.numpy import arrays
 
 
 def test_cli_preserves_config_defaults():
+    """Catches CLI defaults drifting from the programmatic training configuration."""
     assert train.parse_train_config([]) == train.TrainConfig()
 
 
 class TestCheckpoint:
     def test_cli_parses_policy_initialization(self):
+        """Catches flags being ignored before an expensive checkpoint-based training run."""
         parsed = train.parse_train_config(
             [
                 "--init-from",
@@ -45,6 +47,8 @@ class TestCheckpoint:
         assert parsed.checkpoint_top_k == 0
 
     def test_cli_preserves_supplied_defaults_without_mutating_them(self):
+        """Keeps command-line overrides from corrupting defaults reused by later
+        invocations."""
         defaults = train.TrainConfig(
             data_dir=Path("/vol/data"), num_epochs=17, flow_num_steps=6
         )
@@ -54,15 +58,29 @@ class TestCheckpoint:
         assert asdict(defaults) == before
 
     def test_config_rejects_negative_checkpoint_retention(self):
+        """Rejects an invalid retention budget before training can create checkpoints."""
         with pytest.raises(ValueError, match="checkpoint_top_k"):
             train.TrainConfig(checkpoint_top_k=-1)
 
     @pytest.mark.parametrize("value", (0, -1))
     def test_config_rejects_nonpositive_flow_steps(self, value):
+        """Prevents invalid integration budgets from reaching rollout sampling."""
         with pytest.raises(ValueError, match="flow_num_steps must be positive"):
             train.TrainConfig(flow_num_steps=value)
 
     def test_normalizer_state_does_not_share_storage(self):
+        """Normalizer serialization isolates mutable statistics.
+
+        Protects:
+            Exported tensors and restored statistics do not alias the live
+            normalizer.
+        Value:
+            Checkpoint manipulation must not silently change model inputs or action
+            scaling.
+        Approach:
+            Mutate exported values and compare public round-trip results and storage
+            ownership.
+        """
         normalizer = Normalizer(
             np.array([1.0, 2.0], dtype=np.float32),
             np.array([3.0, 4.0], dtype=np.float32),
@@ -103,6 +121,18 @@ class TestCheckpoint:
     def test_normalizer_rejects_invalid_statistics(
         self, group, corruption, data, state_dim, action_dim
     ):
+        """Invalid normalization statistics fail at both construction boundaries.
+
+        Protects:
+            Each state/action statistic must be finite, correctly shaped, and have
+            positive scale.
+        Value:
+            Malformed statistics would otherwise inject invalid values into training
+            and inference.
+        Approach:
+            Generate valid inputs, corrupt one property, and exercise both public
+            constructors.
+        """
         stats = {}
         for name, size in (("state", state_dim), ("action", action_dim)):
             stats[f"{name}_mean"] = data.draw(
@@ -138,6 +168,8 @@ class TestCheckpoint:
             )
 
     def test_reject_unknown_version(self, tmp_path):
+        """Prevents incompatible checkpoint schemas from being interpreted as current
+        weights."""
         path = tmp_path / "unknown.pt"
         torch.save({"format_version": 999}, path)
         with pytest.raises(ValueError, match="Unsupported checkpoint"):
@@ -146,6 +178,18 @@ class TestCheckpoint:
 
 @pytest.mark.parametrize("policy_type", ["mse", "flow"])
 def test_policy_round_trip_preserves_raw_predictions(policy_type, tmp_path):
+    """Saved policies preserve inference in original action units.
+
+    Protects:
+        Weights, normalization, architecture, and inference defaults survive
+        serialization.
+    Value:
+        A loadable checkpoint is insufficient if restored actions differ from the
+        trained policy.
+    Approach:
+        Round-trip real files and compare both policies using identical caller-owned
+        noise.
+    """
     model = build_policy(
         PolicyConfig(
             policy_type=policy_type,
@@ -213,6 +257,18 @@ def test_policy_round_trip_preserves_raw_predictions(policy_type, tmp_path):
 
 @pytest.mark.parametrize("policy_type", ["mse", "flow"])
 def test_loaded_policy_starts_a_fresh_training_run(policy_type, tmp_path):
+    """Checkpoint initialization retains learned state with fresh optimizer history.
+
+    Protects:
+        Loaded architecture and statistics win over new-model flags while new run
+        settings apply.
+    Value:
+        Catches silent horizon changes, discarded weights, or accidental training-
+        session resume.
+    Approach:
+        Run small real CPU training jobs, observing the first update and replacing
+        external services.
+    """
     rng = np.random.default_rng(7)
     episodes = EpisodesDataset(
         tuple(

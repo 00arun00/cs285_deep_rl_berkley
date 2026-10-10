@@ -23,6 +23,18 @@ class TestEvaluationBudget:
     def test_final_step_uses_final_budget_exactly_once(
         self, tmp_path, batch_size, interval, expected
     ):
+        """Training uses the final rollout budget once at completion.
+
+        Protects:
+            Periodic evaluations cannot duplicate or replace the final evaluation on
+            aligned steps.
+        Value:
+            Avoids wasted rollouts and under-budget final scores for short or
+            unaligned training runs.
+        Approach:
+            Observe real optimizer-step counts and substitute only the expensive
+            rollout boundary.
+        """
         rng = np.random.default_rng(7)
         episodes = EpisodesDataset(
             tuple(

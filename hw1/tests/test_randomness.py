@@ -72,6 +72,18 @@ class TinyEnv(gym.Env):
 
 class TestRandomStream:
     def test_existing_seed_identities_remain_stable(self) -> None:
+        """Established stream identities retain their published seed mapping.
+
+        Protects:
+            Registry values and seed encoding preserve existing experiment
+            identities.
+        Value:
+            Catches compatibility changes that would silently invalidate
+            reproducibility of old runs.
+        Approach:
+            Use fixed known seed values rather than deriving expectations through
+            production helpers.
+        """
         # These are compatibility fixtures, not recomputed expected values.
         # Changing an ID or encoding must not silently change existing runs.
         assert RandomStreamFactory(42).seed(StreamId.DATA_SPLIT) == 18311551174447640683
@@ -86,6 +98,17 @@ class TestRandomStream:
     def test_fresh_generators_replay_and_retained_generators_advance(
         self, backend
     ) -> None:
+        """Generator ownership distinguishes replay from continued sampling.
+
+        Protects:
+            Fresh equal identities replay while retained NumPy and Torch generators
+            advance.
+        Value:
+            Catches accidental caching or resets that repeat noise within training.
+        Approach:
+            Compare successive public draws with an independently created replay
+            generator.
+        """
         streams = RandomStreamFactory(42)
         create = getattr(streams, backend)
 
@@ -103,6 +126,18 @@ class TestRandomStream:
         np.testing.assert_array_equal(second_draw, draw(replay))
 
     def test_episode_identities_survive_reordering_and_unrelated_draws(self) -> None:
+        """Indexed streams remain stable under unrelated sampling.
+
+        Protects:
+            Episode identity depends on explicit coordinates rather than request
+            order or call counts.
+        Value:
+            Prevents evaluation results changing when unrelated monitoring work is
+            inserted.
+        Approach:
+            Reorder indexed requests and interleave other streams before comparing
+            seeds and draws.
+        """
         streams = RandomStreamFactory(42)
 
         def episode(index: int):
@@ -139,6 +174,7 @@ class TestRandomStream:
         assert len(set(seeds)) == len(seeds)
 
     def test_factory_consumers_leave_default_rngs_unchanged(self) -> None:
+        """Prevents stream consumers from perturbing unrelated NumPy or Torch randomness."""
         numpy_before = np.random.get_state()
         torch_before = torch.get_rng_state().clone()
         streams = RandomStreamFactory(42)
@@ -163,6 +199,8 @@ class TestRandomStream:
         ],
     )
     def test_invalid_root_seeds_fail_instead_of_being_coerced(self, value, error):
+        """Prevents implicit seed conversion from silently selecting a different
+        experiment."""
         with pytest.raises(error):
             RandomStreamFactory(value)
 
@@ -170,6 +208,8 @@ class TestRandomStream:
     @example(root=0)
     @example(root=2**80 + 42)
     def test_valid_root_seeds_are_preserved(self, root):
+        """Keeps zero and arbitrarily large root seeds reproducible without truncating
+        stored identities."""
         factory = RandomStreamFactory(root)
         assert factory.root_seed == root
         seed = factory.seed(StreamId.TRAIN_LOSS)
@@ -178,11 +218,15 @@ class TestRandomStream:
 
     @given(root=st.integers(max_value=-1))
     def test_negative_root_seeds_are_rejected(self, root):
+        """Extends the fixed invalid-input examples across arbitrary negative seed
+        magnitudes."""
         with pytest.raises(ValueError):
             RandomStreamFactory(root)
 
     @pytest.mark.parametrize("method_name", ["validate", "seed", "numpy", "torch"])
     def test_raw_stream_ids_are_rejected(self, method_name):
+        """Requires the public stream registry so callers cannot silently invent
+        unregistered identities."""
         method = getattr(RandomStreamFactory(42), method_name)
         with pytest.raises(TypeError):
             method(int(StreamId.TRAIN_LOSS))
@@ -204,6 +248,7 @@ class TestRandomStream:
     def test_invalid_coordinates_fail_instead_of_being_coerced(
         self, method_name, coordinate, value, error
     ):
+        """Enforces the same identity validation at every public generator entry point."""
         method = getattr(RandomStreamFactory(42), method_name)
         with pytest.raises(error):
             method(StreamId.TRAIN_LOSS, **{coordinate: value})
@@ -215,6 +260,8 @@ class TestRandomStream:
     def test_valid_coordinate_boundaries_are_accepted(
         self, method_name, variation, index
     ):
+        """Catches off-by-one rejection of valid coordinates, including both 32-bit
+        endpoints."""
         method = getattr(RandomStreamFactory(42), method_name)
         method(StreamId.TRAIN_LOSS, variation=variation, index=index)
 
@@ -224,6 +271,8 @@ class TestRandomStream:
     def test_out_of_range_coordinates_are_rejected(
         self, method_name, coordinate, value
     ):
+        """Catches overflow or wrapping of arbitrary integers into valid stream
+        coordinates."""
         method = getattr(RandomStreamFactory(42), method_name)
         with pytest.raises(ValueError):
             method(StreamId.TRAIN_LOSS, **{coordinate: value})
@@ -232,6 +281,18 @@ class TestRandomStream:
 class TestPolicyInitialization:
     @pytest.mark.parametrize("policy_type", ("mse", "flow"))
     def test_concurrent_initialization_matches_isolated_runs(self, policy_type) -> None:
+        """Concurrent policy construction preserves per-generator initialization.
+
+        Protects:
+            Separate generators reproduce isolated weights without modifying the
+            default RNG.
+        Value:
+            Catches shared-state initialization that makes parallel experiments
+            interfere.
+        Approach:
+            Synchronize two real CPU constructors and compare their weights with
+            serial references.
+        """
         config = PolicyConfig(
             policy_type=policy_type,
             state_dim=3,
@@ -288,6 +349,8 @@ class TestPolicyInitialization:
     def test_initialization_advances_only_the_supplied_generator(
         self, policy_type
     ) -> None:
+        """Prevents repeated initialization from reusing draws or consuming unrelated
+        default randomness."""
         generator = RandomStreamFactory(42).torch(StreamId.MODEL_INIT)
         generator_before = generator.get_state().clone()
         default_before = torch.get_rng_state().clone()
@@ -307,6 +370,8 @@ class TestPolicyInitialization:
         assert torch.equal(default_before, torch.get_rng_state())
 
     def test_failed_construction_preserves_default_rng(self) -> None:
+        """Keeps invalid model configurations from changing subsequent reproducible
+        experiments."""
         before = torch.get_rng_state().clone()
 
         with pytest.raises(ValueError):
@@ -326,6 +391,18 @@ class TestPolicyInitialization:
 
     @pytest.mark.parametrize("policy_type", ["mse", "flow"])
     def test_failed_initialization_preserves_default_rng(self, policy_type):
+        """Initialization failure after random draws leaves default randomness intact.
+
+        Protects:
+            A partially consumed caller generator cannot leak draws into the global
+            generator.
+        Value:
+            Catches exceptional-path RNG contamination missed by construction
+            validation failures.
+        Approach:
+            Inject failure after the real parameter reset; compare caller and
+            default generator states.
+        """
         generator = RandomStreamFactory(42).torch(StreamId.MODEL_INIT)
         generator_before = generator.get_state().clone()
         global_before = torch.get_rng_state().clone()
@@ -344,6 +421,8 @@ class TestPolicyInitialization:
         assert torch.equal(global_before, torch.get_rng_state())
 
     def test_target_device_transfer_preserves_initialized_values(self) -> None:
+        """Catches parameter loss or reinitialization during transfer to an available
+        accelerator."""
         accelerator = torch.accelerator.current_accelerator()
         if accelerator is None or not torch.accelerator.is_available():
             pytest.skip("No accelerator available")
@@ -380,6 +459,18 @@ class TestPolicyInitialization:
 
 class TestRandomnessIntegration:
     def test_loading_and_initialization_can_run_concurrently(self, tmp_path) -> None:
+        """Checkpoint loading and fresh initialization remain independent.
+
+        Protects:
+            Concurrent calls preserve saved weights, new weights, model modes, and
+            default RNG state.
+        Value:
+            Catches loading paths that reseed or overwrite initialization state
+            shared with another run.
+        Approach:
+            Synchronize real loading and construction, using deliberately different
+            checkpoint weights.
+        """
         path = tmp_path / "policy.pt"
         reference = make_policy()
         initialized_reference = make_policy()
@@ -425,6 +516,8 @@ class TestRandomnessIntegration:
     def test_loading_preserves_default_rng_even_when_weights_are_invalid(
         self, tmp_path
     ) -> None:
+        """Keeps successful and rejected checkpoint loads from perturbing later
+        initialization."""
         path = tmp_path / "policy.pt"
         save_policy(path, make_policy(), make_normalizer())
         before = torch.get_rng_state().clone()
@@ -441,6 +534,18 @@ class TestRandomnessIntegration:
     def test_later_episode_actions_do_not_depend_on_earlier_episode_length(
         self,
     ) -> None:
+        """Evaluation randomness resets by episode identity.
+
+        Protects:
+            Extra action draws in one episode cannot change the next episode
+            observations or actions.
+        Value:
+            Keeps checkpoint comparisons reproducible when earlier rollouts
+            terminate at different times.
+        Approach:
+            Run real stochastic inference against a seeded tiny environment with
+            varied first-episode length.
+        """
         model = make_policy()
 
         def rollout(first_length: int) -> TinyEnv:
@@ -472,6 +577,18 @@ class TestRandomnessIntegration:
     def test_monitoring_frequency_does_not_change_flow_training(
         self, name, validation_interval, eval_interval, tmp_path
     ) -> None:
+        """Monitoring schedules do not perturb the learned training trajectory.
+
+        Protects:
+            Extra validation or evaluation preserves every training loss and final
+            parameter value.
+        Value:
+            Catches stream reuse or model-mode leaks that make diagnostic frequency
+            change learning.
+        Approach:
+            Compare small real CPU training runs with real validation and
+            lightweight seeded rollouts.
+        """
         rng = np.random.default_rng(7)
         episodes = EpisodesDataset(
             tuple(

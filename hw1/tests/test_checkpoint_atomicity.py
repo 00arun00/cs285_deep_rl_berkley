@@ -56,6 +56,17 @@ def failing_serializer(partial_write):
     "partial_write", [False, True], ids=["before-write", "partial-write"]
 )
 def test_serialization_failure_preserves_existing_checkpoint(tmp_path, partial_write):
+    """Failed replacement leaves the last usable checkpoint intact.
+
+    Protects:
+        Failures before or during serialization cannot corrupt the published
+        destination.
+    Value:
+        An interrupted save must not destroy the only recoverable trained policy.
+    Approach:
+        Inject faults at torch.save, inspect real destination bytes, and verify a
+        later round trip.
+    """
     path = tmp_path / "policy.pt"
     original, original_stats = policy_and_stats(42, 0)
     replacement, replacement_stats = policy_and_stats(43, 2)
@@ -78,6 +89,18 @@ def test_serialization_failure_preserves_existing_checkpoint(tmp_path, partial_w
     "partial_write", [False, True], ids=["before-write", "partial-write"]
 )
 def test_serialization_failure_does_not_publish_new_checkpoint(tmp_path, partial_write):
+    """Failed first saves leave no published checkpoint.
+
+    Protects:
+        Incomplete serialization is never exposed as a usable policy and does not
+        block retries.
+    Value:
+        Prevents consumers from discovering partial weights after an interrupted
+        first save.
+    Approach:
+        Inject serialization failures against a fresh path, then perform a real save
+        and load.
+    """
     path = tmp_path / "policy.pt"
     policy, stats = policy_and_stats(42, 0)
     with patch.object(torch, "save", side_effect=failing_serializer(partial_write)):

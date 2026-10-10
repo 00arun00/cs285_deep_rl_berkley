@@ -66,6 +66,18 @@ def config(**kwargs):
 def test_training_logs_actual_loss_windows(
     run_training, epochs, batch_size, interval, expected
 ):
+    """Training reports complete loss windows across epoch and run boundaries.
+
+    Protects:
+        Means and example counts describe the actual window, including a short final
+        window.
+    Value:
+        Catches misleading learning curves from dropped, reset, or incorrectly sized
+        windows.
+    Approach:
+        Feed known step losses into the real driver and inspect public logger
+        records.
+    """
     # Known per-step losses make the aggregation oracle independent of the model.
     losses = [torch.tensor(float(i)) for i in range(1, epochs * (24 // batch_size) + 1)]
     with (
@@ -89,6 +101,8 @@ def test_training_logs_actual_loss_windows(
 
 @pytest.mark.parametrize("pending", [set(), {1, 7}], ids=["clean", "pending"])
 def test_training_warns_about_pending_checkpoint_cleanup(run_training, caplog, pending):
+    """Makes leftover checkpoints visible at shutdown without warning after successful
+    cleanup."""
     with (
         patch.object(train, "save_checkpoint_and_retain", return_value=pending),
         caplog.at_level(logging.WARNING),

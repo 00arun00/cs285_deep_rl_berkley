@@ -15,6 +15,8 @@ from .summary_helpers import summary_row_numbers, summary_row_value
 
 class TestLoggingControls:
     def test_cli_defaults_and_disable_flags(self):
+        """Catches output flags accidentally disabling another independently controlled
+        output."""
         defaults = train.parse_train_config([])
         for field in ("log_csv", "log_wandb", "save_checkpoints", "show_summary"):
             assert getattr(defaults, field)
@@ -23,6 +25,7 @@ class TestLoggingControls:
                 assert getattr(parsed, other) == (other != field)
 
     def test_disabled_logger_skips_video_validation(self, tmp_path):
+        """Keeps disabled reporting from failing on video files it will never consume."""
         logger = train.ExperimentLogger(tmp_path, log_csv=False)
         logger.log_eval(
             global_step=1,
@@ -48,6 +51,17 @@ class TestLoggingControls:
 def test_all_output_combinations(
     log_csv, log_wandb, save_checkpoints, show_summary, tmp_path, capsys, monkeypatch
 ):
+    """Training output controls operate independently.
+
+    Protects:
+        Every flag combination preserves training and evaluation while emitting only
+        enabled outputs.
+    Value:
+        Catches cross-flag regressions and silently missing metrics or checkpoints.
+    Approach:
+        Run a one-step CPU job per combination, inspecting real CSVs/checkpoints and
+        fake W&B calls.
+    """
     # Keep semantic rows on one line regardless of the invoking terminal.
     monkeypatch.setenv("COLUMNS", "160")
     episode_count, episode_length = 5, 2
