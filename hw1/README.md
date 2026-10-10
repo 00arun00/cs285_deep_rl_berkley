@@ -177,7 +177,16 @@ This workflow does not attempt to reproduce an interrupted training trajectory.
 
 ### Checks
 
+GitHub Actions runs the HW1 checks on every pull request targeting `main` and
+every push to `main`, using Linux and the Python version in `.python-version`.
+The `HW1 checks` job installs locked dependencies, runs Ruff lint and test
+formatting checks, and runs pytest. The accelerator test skips when no accelerator
+is available. The job is required by the `main` branch merge rules.
+
 ```bash
+uv sync --locked --dev
+uv run --no-sync ruff check src tests
+uv run --no-sync ruff format --check tests
 uv run src/hw1_imitation/train.py --help
 uv run pytest -v
 ```
