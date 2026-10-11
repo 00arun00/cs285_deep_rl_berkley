@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from contextlib import nullcontext
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import cast
@@ -34,6 +34,7 @@ from hw1_imitation.data import (
 )
 from hw1_imitation.evaluation import (
     CheckpointRecord,
+    EvaluationResults,
     compute_validation_loss,
     evaluate_policy,
     save_checkpoint_and_retain,
@@ -43,6 +44,25 @@ from hw1_imitation.model import BasePolicy, PolicyConfig, build_policy
 from hw1_imitation.randomness import RandomStreamFactory, StreamId
 
 LOGDIR_PREFIX = "exp"
+
+
+@dataclass(frozen=True, slots=True)
+class TrainingResult:
+    """Completed run measurements and references to retained local outputs.
+
+    Best follows existing rollout retention: higher scores win, with earlier
+    steps winning ties. It is absent when top-K retention is zero. Both checkpoint
+    references are absent when saving is disabled. Pending cleanup records are
+    excluded because their local files may already have been deleted.
+    """
+
+    output_dir: Path
+    optimizer_steps: int
+    examples_processed: int
+    final_evaluation: EvaluationResults
+    latest_checkpoint: Path | None
+    best_checkpoint: Path | None
+    pending_cleanup_steps: tuple[int, ...]
 
 
 def build_training_summary(
@@ -277,8 +297,10 @@ def train_step(
     return loss.detach()
 
 
-def run_training(config: TrainConfig, *, output_root: Path | None = None) -> None:
-    """Train with the existing run naming under output_root (default: exp/)."""
+def run_training(
+    config: TrainConfig, *, output_root: Path | None = None
+) -> TrainingResult:
+    """Train under output_root (default: exp/) and return after resources close."""
     streams = RandomStreamFactory(root_seed=config.seed)
 
     device = torch.accelerator.current_accelerator()
@@ -360,6 +382,7 @@ def run_training(config: TrainConfig, *, output_root: Path | None = None) -> Non
         weight_decay=config.weight_decay,
     )
     global_step = 0
+    examples_processed = 0
 
     # Setup logging
     exp_name = f"seed_{config.seed}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -460,6 +483,7 @@ def run_training(config: TrainConfig, *, output_root: Path | None = None) -> Non
                     # number of examples before combining it with other batches.
 
                     batch_examples = state.shape[0]
+                    examples_processed += batch_examples
                     loss_sum += loss.item() * batch_examples
                     window_examples_count += batch_examples
 
@@ -580,6 +604,28 @@ def run_training(config: TrainConfig, *, output_root: Path | None = None) -> Non
                 "Extra local files or W&B artifacts may remain.",
                 sorted(pending_cleanup),
             )
+
+    retained = {
+        step: record
+        for step, record in checkpoints.items()
+        if step not in pending_cleanup
+    }
+    latest = retained.get(global_step)
+    best_step = (
+        min(retained, key=lambda step: (-retained[step].score, step))
+        if config.checkpoint_top_k > 0 and retained
+        else None
+    )
+    # Positive epochs and a nonempty loader guarantee the final evaluation.
+    return TrainingResult(
+        output_dir=log_dir,
+        optimizer_steps=global_step,
+        examples_processed=examples_processed,
+        final_evaluation=result,
+        latest_checkpoint=latest.path if latest is not None else None,
+        best_checkpoint=retained[best_step].path if best_step is not None else None,
+        pending_cleanup_steps=tuple(sorted(pending_cleanup)),
+    )
 
 
 def main() -> None:

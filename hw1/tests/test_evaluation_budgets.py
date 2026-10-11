@@ -89,6 +89,12 @@ class TestEvaluationBudget:
             ),
             patch.object(train, "train_step", side_effect=step),
         ):
-            train.run_training(config)
+            result = train.run_training(config)
 
         assert evaluations == expected
+        assert result.optimizer_steps == steps
+        assert result.examples_processed == steps * batch_size
+        assert result.final_evaluation.num_episodes == 50
+        assert result.final_evaluation.mean_reward == 0.5
+        assert result.latest_checkpoint is None
+        assert result.best_checkpoint is None

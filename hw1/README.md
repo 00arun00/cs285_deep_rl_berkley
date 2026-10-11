@@ -68,6 +68,19 @@ videos, and checkpoints; its training and evaluation behavior is unchanged.
 Automatic configuration provenance and hyperparameter tuning are separate future
 work. The existing Modal command below continues to use Tyro flags.
 
+Programmatic training returns a frozen `TrainingResult` after tracking and
+progress contexts close. It contains the output directory, completed optimizer
+steps, actual training examples processed (excluding dropped batches), final
+rollout evaluation, retained latest/best checkpoint paths, and any steps awaiting
+checkpoint cleanup. Existing CLI commands continue to run as before.
+
+The best checkpoint follows the current retention scores, with earlier steps
+winning ties. Its reference is `None` when `checkpoint_top_k=0`; both checkpoint
+references are `None` when saving is disabled. Cleanup-pending records are
+excluded because their local files may already be gone. Periodic and final
+evaluation budgets and their existing retention comparisons are unchanged;
+this result does not introduce a holdout or a new checkpoint-selection rule.
+
 Programmatic callers can compose the packaged presets without launching a CLI:
 
 ```python
