@@ -1,5 +1,7 @@
 """Train on Modal using packaged Hydra presets and key=value overrides."""
 
+from pathlib import Path
+
 import modal
 
 from hw1_imitation.config_composition import compose_training_config
@@ -26,5 +28,5 @@ app = modal.App("hw1-imitation-hydra")
 )
 def train_remote(*args: str) -> None:
     config = compose_training_config(["data=modal", *args])
-    run_training(config)
+    run_training(config, output_root=Path(VOLUME_PATH) / "exp")
     volume.commit()

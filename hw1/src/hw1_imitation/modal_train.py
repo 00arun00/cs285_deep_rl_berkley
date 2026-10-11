@@ -75,5 +75,5 @@ def train_remote(*args: str) -> None:
         defaults=defaults,
         description="Train on Modal.",
     )
-    run_training(config)
+    run_training(config, output_root=Path(VOLUME_PATH) / "exp")
     volume.commit()

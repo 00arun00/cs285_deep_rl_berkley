@@ -122,7 +122,14 @@ The original `modal_train.py` command continues to accept Tyro flags such as
 `--num-epochs 20`; the new command accepts Hydra overrides such as
 `train.num_epochs=20`. The volume is committed after successful training.
 
-Logs and checkpoints will be saved to a Modal volume called `hw1-imitation-volume`. To inspect the logs, you can use:
+Both Modal entry points put training outputs under `/vol/exp/` on the
+`hw1-imitation-volume` volume. Local training continues to write under `exp/`
+in the invocation directory, with the same experiment names. Programmatic
+callers can choose a root with `run_training(config, output_root=Path(...))`;
+this changes only where training outputs are stored. Existing run directories
+are never overwritten.
+
+To inspect the logs, you can use:
 
 ```bash
 uv run modal volume ls hw1-imitation-volume exp

@@ -277,7 +277,8 @@ def train_step(
     return loss.detach()
 
 
-def run_training(config: TrainConfig) -> None:
+def run_training(config: TrainConfig, *, output_root: Path | None = None) -> None:
+    """Train with the existing run naming under output_root (default: exp/)."""
     streams = RandomStreamFactory(root_seed=config.seed)
 
     device = torch.accelerator.current_accelerator()
@@ -366,7 +367,7 @@ def run_training(config: TrainConfig) -> None:
         exp_name += f"_{config.exp_name}"
 
     # The training driver owns the directory and all output lifetimes.
-    log_dir = Path(LOGDIR_PREFIX) / exp_name
+    log_dir = (Path(LOGDIR_PREFIX) if output_root is None else output_root) / exp_name
     log_dir.mkdir(parents=True, exist_ok=False)
 
     total_steps = config.num_epochs * len(train_loader)

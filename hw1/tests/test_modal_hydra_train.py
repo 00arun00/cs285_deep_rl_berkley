@@ -68,7 +68,10 @@ def test_modal_composes_packaged_config_then_trains_and_commits(
         modal_hydra_train.train_remote.local(*overrides)
 
     expected = replace(TrainConfig(data_dir=Path("/vol/data")), **changes)
-    assert events.mock_calls == [call.train(expected), call.commit()]
+    assert events.mock_calls == [
+        call.train(expected, output_root=Path("/vol/exp")),
+        call.commit(),
+    ]
     assert list(tmp_path.iterdir()) == []
 
 
@@ -93,18 +96,23 @@ def test_invalid_configuration_never_starts_training_or_commits(
     assert events.mock_calls == []
 
 
-def test_training_failure_propagates_without_committing(monkeypatch):
+@pytest.mark.parametrize("entrypoint", [modal_train, modal_hydra_train])
+def test_training_failure_propagates_without_committing(monkeypatch, entrypoint):
     events = Mock()
     events.train.side_effect = RuntimeError("training failed")
-    monkeypatch.setattr(modal_hydra_train, "run_training", events.train)
-    monkeypatch.setattr(modal_hydra_train.volume, "commit", events.commit)
+    monkeypatch.setattr(entrypoint, "run_training", events.train)
+    monkeypatch.setattr(entrypoint.volume, "commit", events.commit)
 
     with (
         pytest.warns(UserWarning, match="executing locally"),
         pytest.raises(RuntimeError, match="training failed"),
     ):
-        modal_hydra_train.train_remote.local()
-    assert events.mock_calls == [call.train(TrainConfig(data_dir=Path("/vol/data")))]
+        entrypoint.train_remote.local()
+    assert events.mock_calls == [
+        call.train(
+            TrainConfig(data_dir=Path("/vol/data")), output_root=Path("/vol/exp")
+        )
+    ]
 
 
 def test_original_modal_entry_point_still_accepts_tyro_flags(monkeypatch):
@@ -116,7 +124,8 @@ def test_original_modal_entry_point_still_accepts_tyro_flags(monkeypatch):
         modal_train.train_remote.local("--num-epochs", "20", "--no-log-wandb")
     assert events.mock_calls == [
         call.train(
-            TrainConfig(data_dir=Path("/vol/data"), num_epochs=20, log_wandb=False)
+            TrainConfig(data_dir=Path("/vol/data"), num_epochs=20, log_wandb=False),
+            output_root=Path("/vol/exp"),
         ),
         call.commit(),
     ]
