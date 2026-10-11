@@ -75,7 +75,12 @@ class TestEvaluationBudget:
 
         def evaluate(**kwargs):
             evaluations.append((steps, kwargs["num_eval_episodes"]))
-            return EvaluationResults(0.5, kwargs["num_eval_episodes"], ())
+            return EvaluationResults(
+                0.5,
+                kwargs["num_eval_episodes"],
+                (),
+                (0.5,) * kwargs["num_eval_episodes"],
+            )
 
         root = tmp_path
         with (

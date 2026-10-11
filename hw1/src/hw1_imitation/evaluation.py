@@ -32,11 +32,14 @@ class EvaluationResults:
 
     Paths refer to persistent files owned by the experiment.
     Consumers may read them but do not acquire deletion ownership.
+
+    episode_max_rewards follows evaluation episode-index order.
     """
 
     mean_reward: float
     num_episodes: int
     video_paths: tuple[Path, ...]
+    episode_max_rewards: tuple[float, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -452,4 +455,5 @@ def evaluate_policy(
         mean_reward=float(np.mean(rewards)),
         num_episodes=len(rewards),
         video_paths=tuple(video_paths),
+        episode_max_rewards=tuple(rewards),
     )

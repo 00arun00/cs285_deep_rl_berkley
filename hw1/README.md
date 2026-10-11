@@ -85,6 +85,8 @@ uv run modal volume get hw1-imitation-volume exp/<run-directory>
 The score is the mean of each rollout episode's maximum reward. Periodic and final
 budgets default to 100 episodes each. If an interval lands on the final step, only
 one final evaluation runs. Final evaluation is not a separate untouched holdout.
+Evaluation returns the individual maxima in episode-index order through
+`EvaluationResults.episode_max_rewards`; the aggregate calculation is unchanged.
 Action chunk size controls both prediction horizon and actions executed before
 observing again. These training/evaluation semantics are unchanged.
 

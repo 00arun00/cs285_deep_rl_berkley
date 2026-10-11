@@ -40,7 +40,9 @@ def run_training(tmp_path):
                 train.torch.accelerator, "current_accelerator", return_value=None
             ),
             patch.object(
-                train, "evaluate_policy", return_value=EvaluationResults(0.5, 1, ())
+                train,
+                "evaluate_policy",
+                return_value=EvaluationResults(0.5, 1, (), (0.5,)),
             ),
         ):
             output_dir = tmp_path / "run"

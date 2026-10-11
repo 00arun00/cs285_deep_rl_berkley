@@ -112,7 +112,7 @@ def test_all_output_combinations(
         patch.object(
             train,
             "evaluate_policy",
-            return_value=EvaluationResults(0.5, 1, ()),
+            return_value=EvaluationResults(0.5, 1, (), (0.5,)),
         ) as evaluate,
     ):
         run = initialize.return_value.__enter__.return_value

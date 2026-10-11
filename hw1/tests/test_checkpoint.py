@@ -315,7 +315,7 @@ def test_loaded_policy_starts_a_fresh_training_run(policy_type, tmp_path):
             patch.object(
                 train,
                 "evaluate_policy",
-                return_value=EvaluationResults(0.5, 1, ()),
+                return_value=EvaluationResults(0.5, 1, (), (0.5,)),
             ) as evaluate,
             patch.object(
                 train, "save_checkpoint_and_retain", side_effect=save
