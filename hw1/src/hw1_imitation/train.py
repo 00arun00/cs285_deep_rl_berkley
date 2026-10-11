@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import nullcontext
 from dataclasses import asdict
 from pathlib import Path
@@ -33,7 +33,7 @@ from hw1_imitation.evaluation import (
 )
 from hw1_imitation.logging_utils import ExperimentLogger
 from hw1_imitation.model import BasePolicy, PolicyConfig, build_policy
-from hw1_imitation.results import TrainingResult
+from hw1_imitation.results import TrainingEvaluation, TrainingResult
 from hw1_imitation.randomness import RandomStreamFactory, StreamId
 from hw1_imitation.reporting import build_training_summary
 
@@ -113,8 +113,18 @@ def train_step(
     return loss.detach()
 
 
-def run_training(config: TrainConfig, *, output_dir: Path) -> TrainingResult:
-    """Train in a prepared directory and return after tracking/progress close."""
+def run_training(
+    config: TrainConfig,
+    *,
+    output_dir: Path,
+    on_evaluation: Callable[[TrainingEvaluation], None] | None = None,
+) -> TrainingResult:
+    """Train in a prepared directory and return after tracking/progress close.
+
+    on_evaluation observes completed evaluations after logging and optional
+    checkpoint saving. Its return value is ignored; exceptions propagate while
+    the tracking and progress contexts unwind.
+    """
     if not output_dir.is_dir():
         raise ValueError("output_dir must be an existing directory")
     streams = RandomStreamFactory(root_seed=config.randomness.seed)
@@ -425,6 +435,21 @@ def run_training(config: TrainConfig, *, output_dir: Path) -> TrainingResult:
                                 checkpoints=checkpoints,
                                 normalizer=normalizer,
                                 flow_num_steps=config.evaluation.flow_num_steps,
+                            )
+
+                        if on_evaluation is not None:
+                            on_evaluation(
+                                TrainingEvaluation(
+                                    optimizer_steps=global_step,
+                                    examples_processed=examples_processed,
+                                    is_final=training_complete,
+                                    evaluation=result,
+                                    checkpoint=(
+                                        checkpoints[global_step].path
+                                        if config.checkpoints.enabled
+                                        else None
+                                    ),
+                                )
                             )
 
                         progress.set_description_str("Train")

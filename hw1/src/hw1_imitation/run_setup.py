@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
 import hashlib
@@ -13,11 +13,14 @@ from uuid import uuid4
 
 from hw1_imitation.config import ExperimentConfig, config_to_dict
 
-from hw1_imitation.results import TrainingResult
+from hw1_imitation.results import TrainingEvaluation, TrainingResult
 
 
 def launch_experiment(
-    config: ExperimentConfig, *, overrides: Sequence[str] = ()
+    config: ExperimentConfig,
+    *,
+    overrides: Sequence[str] = (),
+    on_evaluation: Callable[[TrainingEvaluation], None] | None = None,
 ) -> TrainingResult:
     """Save requested configuration and lineage before starting a new run.
 
@@ -72,4 +75,4 @@ def launch_experiment(
 
     from hw1_imitation.train import run_training
 
-    return run_training(training, output_dir=output_dir)
+    return run_training(training, output_dir=output_dir, on_evaluation=on_evaluation)

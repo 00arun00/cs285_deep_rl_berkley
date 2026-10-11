@@ -24,7 +24,8 @@ def test_launch_saves_requested_config_and_overrides_before_training(
     config = ExperimentConfig(run=RunConfig(name="example"))
     overrides = ["run.name=example"]
 
-    def observe(training, *, output_dir):
+    def observe(training, *, output_dir, on_evaluation):
+        assert on_evaluation is sentinel.callback
         assert training is config.train
         assert output_dir == tmp_path / "exp" / "example"
         saved = json.loads((output_dir / "config.json").read_text())
@@ -38,7 +39,9 @@ def test_launch_saves_requested_config_and_overrides_before_training(
         return sentinel.training_result
 
     with patch.object(train, "run_training", side_effect=observe) as run:
-        result = launch_experiment(config, overrides=overrides)
+        result = launch_experiment(
+            config, overrides=overrides, on_evaluation=sentinel.callback
+        )
     run.assert_called_once()
     assert result is sentinel.training_result
 
@@ -74,7 +77,8 @@ def test_warm_start_loads_preserved_parent_bytes(tmp_path, monkeypatch):
         run=RunConfig(output_root=tmp_path / "runs", name="child"),
     )
 
-    def observe(training, *, output_dir):
+    def observe(training, *, output_dir, on_evaluation):
+        assert on_evaluation is None
         parent.unlink()  # Retention in the parent run cannot break this run.
         assert training == replace(
             config.train, warm_start=output_dir / "initial_policy.pt"

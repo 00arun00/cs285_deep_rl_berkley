@@ -37,3 +37,18 @@ class TrainingResult:
     latest_checkpoint: Path | None
     best_checkpoint: Path | None
     pending_cleanup_steps: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class TrainingEvaluation:
+    """Snapshot emitted after rollout logging and optional checkpoint retention.
+
+    The checkpoint exists at notification time; later retention may delete it.
+    is_final identifies the last scheduled evaluation, not successful run cleanup.
+    """
+
+    optimizer_steps: int
+    examples_processed: int
+    is_final: bool
+    evaluation: EvaluationResults
+    checkpoint: Path | None

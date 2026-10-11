@@ -149,6 +149,30 @@ latest-only retention; ties favor earlier steps. Pending deletions are excluded
 because their local files may already be gone. Paths remain owned by the run.
 Exceptions propagate instead of returning a successful result.
 
+`launch_experiment(..., on_evaluation=callback)` and the core trainer accept a
+callback receiving a frozen `TrainingEvaluation` after rollout logging and
+optional checkpoint saving/retention. It contains actual work counts, scores,
+`is_final`, and the current checkpoint path when saving is enabled.
+Its return value is ignored; exceptions propagate while resources close.
+`is_final` marks the last scheduled evaluation, not successful run cleanup.
+Later retention may remove an earlier event's checkpoint. Callbacks receive
+measurements and paths, not model/optimizer/tracking objects.
+
+```python
+from hw1_imitation.config_composition import compose_experiment
+from hw1_imitation.run_setup import launch_experiment
+
+config = compose_experiment(["logging=local", "train.optimization.num_epochs=20"])
+result = launch_experiment(
+    config,
+    on_evaluation=lambda event: print(event.optimizer_steps, event.evaluation.mean_reward),
+)
+print(result.best_checkpoint)
+```
+
+These APIs are the extension points for later tuning and staged training. Optuna,
+pruning, curriculum orchestration, exact resume, and generic executors are deferred.
+
 ## Checks
 
 GitHub Actions runs `HW1 checks` for PRs targeting any branch and pushes to `main`.
