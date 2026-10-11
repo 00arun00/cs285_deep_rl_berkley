@@ -1,0 +1,11 @@
+# @package _global_
+defaults:
+  - override /policy: mse
+  - override /architecture: mlp256
+  - override /data: pusht
+  - override /optimizer: adamw
+  - override /evaluation: legacy
+  - override /randomness: fixed
+
+train:
+  exp_name: mse-baseline

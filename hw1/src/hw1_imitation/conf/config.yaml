@@ -1,0 +1,21 @@
+defaults:
+  - training_defaults
+  - policy: null
+  - architecture: null
+  - data: null
+  - optimizer: null
+  - evaluation: null
+  - randomness: null
+  - logging: null
+  - _self_
+  - experiment: null
+  - override hydra/job_logging: none
+  - override hydra/hydra_logging: none
+
+# The existing trainer continues to own exp/ and all training outputs.
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: .
+  output_subdir: null

@@ -1,0 +1,2 @@
+# @package train
+hidden_dims: [512, 512, 512]

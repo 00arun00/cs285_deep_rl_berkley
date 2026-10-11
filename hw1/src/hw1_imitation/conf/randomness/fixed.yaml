@@ -1,0 +1,3 @@
+# @package train
+seed: 42
+data_split_variation: 0

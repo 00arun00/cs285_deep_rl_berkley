@@ -1,0 +1,5 @@
+# @package train
+validation_interval: 100
+eval_interval: 10000
+eval_episodes: 100
+final_eval_episodes: 100

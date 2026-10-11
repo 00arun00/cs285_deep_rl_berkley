@@ -28,6 +28,54 @@ uv run src/hw1_imitation/train.py --help
 
 This should work out of the box with the provided starter code.
 
+## Composing training configurations with Hydra
+
+The original Tyro command and its flags remain supported. An optional Hydra
+entry point provides reusable component presets, named experiments, and
+`key=value` overrides. Run these commands from `hw1/`:
+
+```bash
+# Same training defaults as the original Tyro entry point.
+uv run -m hw1_imitation.hydra_train
+
+# Select a named experiment, then override a concrete value.
+uv run -m hw1_imitation.hydra_train experiment=mse_baseline train.lr=0.0001
+
+# Compose components; quote list overrides for your shell.
+uv run -m hw1_imitation.hydra_train policy=flow logging=local 'train.hidden_dims=[128,128]'
+
+# Inspect the resolved composition without training.
+uv run -m hw1_imitation.hydra_train experiment=mse_baseline --cfg job --resolve
+```
+
+Python's `TrainConfig` remains the source of default values. The root Hydra
+configuration leaves component slots unselected, so default training follows
+that dataclass. Presets under `src/hw1_imitation/conf/` are explicit opt-ins:
+`policy`, `architecture`, `data`, `optimizer`, `evaluation`, `randomness`, and
+`logging`. The `mse_baseline` experiment selects the baseline components and
+sets its experiment name. Composition order is Python defaults, selected
+components, experiment values, then CLI value overrides. CLI component choices
+also override the experiment's component selections.
+
+The resolved values are validated and converted to the same frozen `TrainConfig`
+used by the trainer. Unknown fields and invalid values fail before training.
+Relative data and checkpoint paths remain relative to the directory from which
+you launch the command.
+
+Hydra's automatic output directory, configuration snapshots, and logging setup
+are disabled by default. The existing trainer still owns `exp/`, W&B, CSVs,
+videos, and checkpoints; its training and evaluation behavior is unchanged.
+Automatic configuration provenance and hyperparameter tuning are separate future
+work. The existing Modal command below continues to use Tyro flags.
+
+Programmatic callers can compose the packaged presets without launching a CLI:
+
+```python
+from hw1_imitation.config_composition import compose_training_config
+
+config = compose_training_config(["policy=flow", "train.lr=0.0001"])
+```
+
 ## Weights & Biases (wandb) login
 
 These assignments use [Weights & Biases (WandB)](https://wandb.ai) for experiment tracking. WandB is a tool for logging and visualizing machine learning experiments. It is free for academic use. For W&B logging (enabled by default), log in using your API key. Local-only runs with `--no-log-wandb` do not require W&B login.
