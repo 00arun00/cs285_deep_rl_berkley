@@ -2,7 +2,7 @@ from pathlib import Path
 
 import modal
 
-from hw1_imitation.train import TrainConfig, parse_train_config, run_training
+from hw1_imitation.config_composition import compose_experiment
 
 
 APP_NAME = "hw1-imitation"
@@ -69,11 +69,10 @@ env = {
     cpu=DEFAULT_CPU,
 )
 def train_remote(*args: str) -> None:
-    defaults = TrainConfig(data_dir=Path(VOLUME_PATH) / "data")
-    config = parse_train_config(
-        list(args),
-        defaults=defaults,
-        description="Train on Modal.",
+    config = compose_experiment(["runtime=modal", *args])
+    from hw1_imitation.train import run_training
+
+    run_training(
+        config.train, output_root=config.run.output_root, run_name=config.run.name
     )
-    run_training(config)
     volume.commit()

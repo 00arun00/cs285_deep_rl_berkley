@@ -16,7 +16,6 @@ dependencies = [
     "rich>=14.2.0",
     "ruff>=0.14.10",
     "torch>=2.9.1",
-    "tyro>=1.0.3",
     "wandb==0.30.0",
     "zarr>=3.1.5",
 ]

@@ -1,5 +1,13 @@
 """Exercise output controls without network access or environment rollouts."""
 
+from hw1_imitation.config import (
+    CheckpointConfig,
+    EvaluationConfig,
+    LoggingConfig,
+    ModelConfig,
+    OptimizationConfig,
+)
+
 import csv
 from unittest.mock import patch
 
@@ -14,16 +22,6 @@ from .summary_helpers import summary_row_numbers, summary_row_value
 
 
 class TestLoggingControls:
-    def test_cli_defaults_and_disable_flags(self):
-        """Catches output flags accidentally disabling another independently controlled
-        output."""
-        defaults = train.parse_train_config([])
-        for field in ("log_csv", "log_wandb", "save_checkpoints", "show_summary"):
-            assert getattr(defaults, field)
-            parsed = train.parse_train_config(["--no-" + field.replace("_", "-")])
-            for other in ("log_csv", "log_wandb", "save_checkpoints", "show_summary"):
-                assert getattr(parsed, other) == (other != field)
-
     def test_disabled_logger_skips_video_validation(self, tmp_path):
         """Keeps disabled reporting from failing on video files it will never consume."""
         logger = train.ExperimentLogger(tmp_path, log_csv=False)
@@ -78,15 +76,11 @@ def test_all_output_combinations(
     )
     root = tmp_path
     config = train.TrainConfig(
-        log_csv=log_csv,
-        log_wandb=log_wandb,
-        save_checkpoints=save_checkpoints,
-        show_summary=show_summary,
-        hidden_dims=(4,),
-        chunk_size=1,
-        num_epochs=1,
-        batch_size=8,
-        num_video_episodes=0,
+        logging=LoggingConfig(csv=log_csv, wandb=log_wandb, show_summary=show_summary),
+        checkpoints=CheckpointConfig(enabled=save_checkpoints),
+        model=ModelConfig(hidden_dims=(4,), chunk_size=1),
+        optimization=OptimizationConfig(num_epochs=1, batch_size=8),
+        evaluation=EvaluationConfig(num_video_episodes=0),
     )
     real_step = train.train_step
     real_validation = train.compute_validation_loss
@@ -135,7 +129,9 @@ def test_all_output_combinations(
         validation_episodes = episode_count - train_episodes
         train_samples = train_episodes * episode_length
         validation_samples = validation_episodes * episode_length
-        optimizer_steps = config.num_epochs * (train_samples // config.batch_size)
+        optimizer_steps = config.optimization.num_epochs * (
+            train_samples // config.optimization.batch_size
+        )
         assert summary_row_numbers(captured.err, "Episodes") == [
             train_episodes,
             validation_episodes,
@@ -145,7 +141,7 @@ def test_all_output_combinations(
             validation_samples
         ]
         assert summary_row_numbers(captured.err, "Training budget") == [
-            config.num_epochs,
+            config.optimization.num_epochs,
             optimizer_steps,
         ]
         assert summary_row_value(captured.err, "Device") == "cpu"

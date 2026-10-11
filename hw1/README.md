@@ -2,202 +2,127 @@
 
 ## Setup
 
-This project uses `uv` for package management. `uv` is a Python package and environment manager from [Astral](https://astral.sh). It replaces tools like
-`pip`, `pipx`, `conda`, and `virtualenv` with a single, simple interface. It is also much faster than prior tools.
-
-### Installing `uv`
-
-Run the following in your terminal:
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-After installation, open a new terminal so `uv` is on your `PATH`.
-
-### Always use `uv run`
-
-Do **not** run `python` or `pip` directly. Always run scripts through `uv run` so dependencies
-and environments are handled automatically. If you want to add a new dependency, you can use `uv add`. This will add the dependency to `pyproject.toml`, update `uv.lock`, and install the package into your virtual environment.
-
-Example:
-
-```bash
-uv run src/hw1_imitation/train.py --help
-```
-
-This should work out of the box with the provided starter code.
-
-## Weights & Biases (wandb) login
-
-These assignments use [Weights & Biases (WandB)](https://wandb.ai) for experiment tracking. WandB is a tool for logging and visualizing machine learning experiments. It is free for academic use. For W&B logging (enabled by default), log in using your API key. Local-only runs with `--no-log-wandb` do not require W&B login.
-
-```bash
-uv run wandb login
-```
-
-Follow the prompt to paste your API key.
-
-## Using Modal
-
-**Note that Modal is likely not necessary for this assignment. In testing, training was much faster on a local laptop CPU than on Modal. However, you may need to use Modal in future assignments, so if you want to get set up, here are the instructions:**
-
-First, create a Modal account. You should recieve $30 in free credits, which will be plenty for this assignment. Then, you can train on Modal with the following command:
-
-```bash
-uv run modal run src/hw1_imitation/modal_train.py
-```
-
-This will build a Modal container and launch training remotely. You can pass the same flags as the local training script. If you are logged into WandB locally, your API key will be automatically forwarded to the Modal container.
-
-Logs and checkpoints will be saved to a Modal volume called `hw1-imitation-volume`. To inspect the logs, you can use:
-
-```bash
-uv run modal volume ls hw1-imitation-volume exp
-```
-
-Then, you can download the logs and checkpoints to your local machine using a command like the following:
-
-```bash
-uv run modal volume get hw1-imitation-volume exp/<experiment_name>
-```
-
-## Evaluation episode counts
-
-Use fewer episodes for periodic rollouts while keeping a full final evaluation:
-
-```bash
-uv run src/hw1_imitation/train.py --eval-episodes 5 --final-eval-episodes 100
-```
-
-Both counts must be positive and default to 100. If a periodic evaluation lands
-on the final training step, only the final evaluation runs, using
-`--final-eval-episodes`. Evaluation intervals, video recording, and checkpoint
-schedules are unchanged. Video count is capped by the rollout episode count.
-
-## Reusing policy checkpoints
-
-CSV metrics, W&B reporting, and checkpoint saving are enabled by default and
-can be disabled independently:
-
-```bash
-uv run src/hw1_imitation/train.py --no-log-wandb
-uv run src/hw1_imitation/train.py --no-log-csv --no-log-wandb --no-save-checkpoints
-```
-
-`--no-log-csv` prevents metric CSV creation and writes. `--no-log-wandb` skips
-W&B initialization, metrics, video uploads, and checkpoint artifacts.
-`--no-save-checkpoints` skips both local checkpoints and their W&B artifacts.
-Progress, warnings, validation, and rollout evaluation remain enabled. Videos
-are still recorded unless `--num-video-episodes 0` is supplied. The run directory
-is still created even when all three outputs are disabled.
-
-When checkpoint saving is enabled, each rollout evaluation (including the final
-training step) saves `exp/<experiment_name>/checkpoints/policy_step_<step>.pt`.
-`--checkpoint-top-k` (default: 3) retains the best K by rollout mean reward plus
-latest. Ties favor earlier checkpoints; zero keeps only latest. This setting has
-no effect when checkpoint saving is disabled.
-
-With W&B enabled, checkpoints are also uploaded as model artifacts, with `best`
-(when K > 0) and `latest` aliases. Pruning waits for upload completion. Local-only
-runs apply the same retention without W&B. Cleanup failures are logged and retried
-at the next save; pending cleanup is reported at the end of training. Retry state
-does not persist across runs. Offline W&B runs remain unsupported; use
-`--no-log-wandb` for local-only runs. W&B cache files and evaluation videos are
-not covered by checkpoint retention.
-
-The policy checkpoint format (version 1) contains:
-
-- Model architecture, including the prediction horizon (`chunk_size`).
-- Learned weights, saved as CPU tensors.
-- Observation and action normalization statistics.
-- Default flow inference settings (`flow_num_steps`).
-
-Files are written atomically and loaded with `weights_only=True`. They do not
-contain optimizer history, random state, or training position. Legacy whole-model
-`.pkl` files and earlier experimental resume-checkpoint schemas are unsupported.
-
-### Load for inference or evaluation
-
-The original training dataset is not needed:
-
-```python
-import torch
-from hw1_imitation.checkpoint import load_policy
-
-model, normalizer, inference_config = load_policy(
-    "policy_step_12000.pt",
-    device="cpu",
-)
-
-# raw_observations: NumPy array shaped (batch, state_dim).
-states = torch.as_tensor(
-    normalizer.normalize_state(raw_observations),
-    dtype=torch.float32,
-)
-generator = torch.Generator(device=states.device).manual_seed(42)
-with torch.no_grad():
-    normalized_actions = model.sample_actions(
-        states,
-        generator=generator,
-        num_steps=inference_config["flow_num_steps"],
-    )
-actions = normalizer.denormalize_action(normalized_actions.cpu().numpy())
-# Clip actions to the environment's bounds before stepping it.
-```
-
-The loader returns the model in evaluation mode. For rollout evaluation, pass
-`model.chunk_size`, the saved `flow_num_steps`, and a `RandomStreamFactory` via
-`streams=` to `evaluate_policy()`. You can explicitly choose a different flow
-integration step count when evaluating.
-
-### Train further from saved weights
-
-Run these commands from `hw1/`. To initialize a new training run from a policy:
-
-```bash
-uv run src/hw1_imitation/train.py --init-from /path/to/policy_step_12000.pt --num-epochs 20 --lr 0.0001
-```
-
-This trains for **20 additional epochs** with a fresh optimizer, seed, counters,
-and logging run. Training and evaluation settings come from the new invocation's
-flags and defaults; the previous training configuration is not inherited.
-In particular, evaluations use the new run's `--flow-num-steps` value.
-
-The loaded policy supplies its architecture and normalizer. `--policy-type`,
-`--hidden-dims`, and `--chunk-size` apply only to fresh models. Data preparation and
-rollout evaluation use the loaded model's actual horizon. The actual architecture
-is recorded under `model_config` in W&B alongside the requested run settings.
-New demonstrations must have compatible observation/action dimensions and meaning;
-the saved normalization is reused rather than fitted again.
-
-Omit `--init-from` to train a new model. Training loss is logged every
-`log_interval` steps and at the final step; loss windows may span epochs.
-This workflow does not attempt to reproduce an interrupted training trajectory.
-
-### Checks
-
-GitHub Actions runs the HW1 checks on every pull request irrespective of the
-target branch and every push to `main`, using Linux and the Python
-version in `.python-version`.
-The `HW1 checks` job installs locked dependencies, runs Ruff lint and test
-formatting checks, and runs pytest. The accelerator test skips when no accelerator
-is available. The job is required by the `main` branch merge rules.
+Use `uv` for dependency management and run Python through `uv run`:
 
 ```bash
 uv sync --locked --dev
-uv run --no-sync ruff check src tests
-uv run --no-sync ruff format --check tests
-uv run src/hw1_imitation/train.py --help
-uv run pytest -v
+uv run wandb login
 ```
 
-All tests use pytest, with parameterized cases for policy variants, output
-combinations, and invalid inputs.
-To run only the flow checkpoint variants, use
-`uv run pytest tests/test_checkpoint.py -k flow -v`.
+W&B is enabled by default. Use `logging=local` for local-only runs without W&B credentials.
 
-Tests cover policy round trips, training, evaluation budgets, logging, checkpoint
-retention, and random-stream isolation. Data access, physics environments, and W&B
-services are mocked. An accelerator transfer test runs when hardware is available;
-the suite does not exercise GPU training or remote uploads.
+## Configuration and local training
+
+Run commands from `hw1/`. Hydra is the configuration frontend:
+
+```bash
+uv run -m hw1_imitation.cli
+uv run -m hw1_imitation.cli experiment=mse_baseline train.optimization.lr=0.0001
+uv run -m hw1_imitation.cli model=flow architecture=mlp512 logging=local
+uv run -m hw1_imitation.cli 'train.model.hidden_dims=[128,128]' train.evaluation.episodes=5
+uv run -m hw1_imitation.cli --cfg job --resolve
+```
+
+The last command inspects configuration without importing the trainer or starting training.
+Tyro flags and the old flat configuration paths are intentionally removed.
+
+`ExperimentConfig` has `train` and `run` sections. The frozen, validated `TrainConfig`
+contains `data`, `model`, `optimization`, `evaluation`, `randomness`, `logging`, and
+`checkpoints`. Functions receive concrete Python dataclasses. Hydra objects stay at
+composition and CLI boundaries. `ModelConfig` describes requested architecture;
+`PolicyConfig` describes the actual model, including data-derived input/output dimensions.
+
+Python field definitions are the source of types, validation, and defaults. Composition
+order is Python defaults, selected components, experiment values, then CLI value
+overrides. CLI component selections override experiment defaults. Unselected component
+slots inherit Python defaults. Unknown fields and invalid values fail before training.
+Relative paths remain relative to the invocation directory. Hydra does not change cwd,
+configure logging, or create its own output/snapshot directories.
+
+```python
+from hw1_imitation.config_composition import compose_experiment
+
+config = compose_experiment(["model=flow", "train.optimization.lr=0.0001"])
+```
+
+The `run` section controls `output_root` (default `exp/`) and an optional `name`.
+New run directories never overwrite existing ones.
+
+## Modal
+
+```bash
+uv run modal run -m hw1_imitation.modal_train
+uv run modal run -m hw1_imitation.modal_train model=flow train.optimization.lr=0.0001
+uv run modal run -m hw1_imitation.modal_train experiment=mse_baseline logging=local
+```
+
+Modal uses the same composition and trainer. Its `runtime=modal` preset defaults to
+`/vol/data` and `/vol/exp` on `hw1-imitation-volume`; user value overrides win. The
+volume is committed after successful training. Container resources remain defined
+in the thin Modal adapter. No separate Hydra/Tyro Modal apps are needed.
+
+```bash
+uv run -m hw1_imitation.cli runtime=modal --cfg job --resolve
+uv run modal volume ls hw1-imitation-volume exp
+uv run modal volume get hw1-imitation-volume exp/<run-directory>
+```
+
+## Evaluation and outputs
+
+The score is the mean of each rollout episode's maximum reward. Periodic and final
+budgets default to 100 episodes each. If an interval lands on the final step, only
+one final evaluation runs. Final evaluation is not a separate untouched holdout.
+Action chunk size controls both prediction horizon and actions executed before
+observing again. These training/evaluation semantics are unchanged.
+
+CSV logging, W&B, and checkpoint saving can be disabled independently:
+
+```bash
+uv run -m hw1_imitation.cli train.logging.csv=false train.logging.wandb=false train.checkpoints.enabled=false
+uv run -m hw1_imitation.cli train.evaluation.num_video_episodes=0
+```
+
+When enabled, every evaluation saves a local policy checkpoint and uploads it to
+W&B. `train.checkpoints.top_k` (default 3) retains best K plus latest; ties favor
+earlier steps, and zero keeps latest only. Local and remote retention agree;
+deletion waits for upload completion. Cleanup failures are logged and retried at
+later saves, with unresolved steps reported on completion. Videos and W&B cache
+files are outside checkpoint retention. Offline W&B is unsupported; use
+`logging=local` instead.
+
+## Warm starts and inference checkpoints
+
+```bash
+uv run -m hw1_imitation.cli initialization=checkpoint train.warm_start=/path/to/policy.pt train.optimization.num_epochs=20 train.optimization.lr=0.0001
+```
+
+This begins a new 20-epoch optimization run from saved weights, with a fresh
+optimizer, counters, random streams, and tracking run. The checkpoint supplies
+architecture and normalization. `initialization=checkpoint` sets `train.model=null`
+so fresh-model settings cannot silently conflict. Direct Python callers use
+`TrainConfig(model=None, warm_start=Path(...), ...)`. New demonstrations must have
+compatible observation/action dimensions and meanings. Inference settings such
+as flow steps come from the new run's evaluation configuration.
+
+Policy checkpoints contain architecture, CPU weights, normalization, and inference
+defaults. They are written atomically and loaded with `weights_only=True`. They do
+not restore optimizer history, RNG state, or data-loading position. Full resume,
+curriculum orchestration, and checkpoint-format migrations are outside this stage.
+
+For standalone inference, `load_policy(path, device=...)` returns the model in
+evaluation mode, its normalizer, and inference settings. Normalize raw observations,
+call `model.sample_actions(..., generator=..., num_steps=...)`, then denormalize actions.
+
+## Checks
+
+GitHub Actions runs `HW1 checks` for PRs targeting any branch and pushes to `main`.
+
+```bash
+uv run --no-sync ruff check src tests
+uv run --no-sync ruff format --check tests
+uv run --no-sync pytest -q
+```
+
+Tests cover composition, validation, model round trips, warm starts, evaluation
+budgets, logging, retention, and random-stream isolation. Tiny training fixtures
+use mocked data, environments, and W&B services; no remote training is launched.

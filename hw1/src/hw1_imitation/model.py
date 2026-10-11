@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import abc
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from hw1_imitation.config import PolicyType
 
 import torch
 from torch import nn
-
-PolicyType: TypeAlias = Literal["mse", "flow"]
 
 
 @dataclass(frozen=True)

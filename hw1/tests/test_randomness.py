@@ -4,6 +4,14 @@ These tests check reproducibility and isolation, not statistical independence
 or equivalence across devices and library versions.
 """
 
+from hw1_imitation.config import (
+    CheckpointConfig,
+    EvaluationConfig,
+    LoggingConfig,
+    ModelConfig,
+    OptimizationConfig,
+)
+
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
@@ -618,21 +626,18 @@ class TestRandomnessIntegration:
                 return loss
 
             config = train.TrainConfig(
-                policy_type="flow",
-                hidden_dims=(4,),
-                chunk_size=1,
-                num_epochs=2,
-                batch_size=4,
-                validation_interval=validation_interval,
-                eval_interval=eval_interval,
-                eval_episodes=2,
-                final_eval_episodes=2,
-                flow_num_steps=2,
-                num_video_episodes=0,
-                save_checkpoints=False,
-                log_wandb=False,
-                log_csv=False,
-                show_summary=False,
+                model=ModelConfig(policy_type="flow", hidden_dims=(4,), chunk_size=1),
+                optimization=OptimizationConfig(num_epochs=2, batch_size=4),
+                evaluation=EvaluationConfig(
+                    validation_interval=validation_interval,
+                    interval=eval_interval,
+                    episodes=2,
+                    final_episodes=2,
+                    flow_num_steps=2,
+                    num_video_episodes=0,
+                ),
+                checkpoints=CheckpointConfig(enabled=False),
+                logging=LoggingConfig(wandb=False, csv=False, show_summary=False),
             )
             with (
                 patch.object(train, "LOGDIR_PREFIX", str(root)),

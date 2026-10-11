@@ -1,5 +1,13 @@
 """Periodic and final rollouts receive their respective episode budgets."""
 
+from hw1_imitation.config import (
+    CheckpointConfig,
+    EvaluationConfig,
+    LoggingConfig,
+    ModelConfig,
+    OptimizationConfig,
+)
+
 from unittest.mock import patch
 
 import numpy as np
@@ -47,18 +55,13 @@ class TestEvaluationBudget:
             )
         )
         config = train.TrainConfig(
-            num_epochs=1,
-            batch_size=batch_size,
-            hidden_dims=(4,),
-            chunk_size=1,
-            eval_interval=interval,
-            eval_episodes=5,
-            final_eval_episodes=50,
-            num_video_episodes=0,
-            save_checkpoints=False,
-            log_wandb=False,
-            log_csv=False,
-            show_summary=False,
+            optimization=OptimizationConfig(num_epochs=1, batch_size=batch_size),
+            model=ModelConfig(hidden_dims=(4,), chunk_size=1),
+            evaluation=EvaluationConfig(
+                interval=interval, episodes=5, final_episodes=50, num_video_episodes=0
+            ),
+            checkpoints=CheckpointConfig(enabled=False),
+            logging=LoggingConfig(wandb=False, csv=False, show_summary=False),
         )
         steps = 0
         evaluations = []

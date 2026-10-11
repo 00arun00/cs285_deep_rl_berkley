@@ -1,7 +1,13 @@
 """CPU tests for reusable policies and fresh training from saved weights."""
 
-from dataclasses import asdict
-from pathlib import Path
+from hw1_imitation.config import (
+    EvaluationConfig,
+    LoggingConfig,
+    ModelConfig,
+    OptimizationConfig,
+    RandomnessConfig,
+)
+
 from unittest.mock import patch
 
 import numpy as np
@@ -18,56 +24,7 @@ from hypothesis import strategies as st
 from hypothesis.extra.numpy import arrays
 
 
-def test_cli_preserves_config_defaults():
-    """Catches CLI defaults drifting from the programmatic training configuration."""
-    assert train.parse_train_config([]) == train.TrainConfig()
-
-
 class TestCheckpoint:
-    def test_cli_parses_policy_initialization(self):
-        """Catches flags being ignored before an expensive checkpoint-based training run."""
-        parsed = train.parse_train_config(
-            [
-                "--init-from",
-                "/tmp/policy.pt",
-                "--num-epochs",
-                "20",
-                "--flow-num-steps",
-                "3",
-                "--data-split-variation",
-                "7",
-                "--checkpoint-top-k",
-                "0",
-            ]
-        )
-        assert parsed.init_from == Path("/tmp/policy.pt")
-        assert parsed.num_epochs == 20
-        assert parsed.flow_num_steps == 3
-        assert parsed.data_split_variation == 7
-        assert parsed.checkpoint_top_k == 0
-
-    def test_cli_preserves_supplied_defaults_without_mutating_them(self):
-        """Keeps command-line overrides from corrupting defaults reused by later
-        invocations."""
-        defaults = train.TrainConfig(
-            data_dir=Path("/vol/data"), num_epochs=17, flow_num_steps=6
-        )
-        before = asdict(defaults)
-        parsed = train.parse_train_config(["--num-epochs", "20"], defaults=defaults)
-        assert asdict(parsed) == {**before, "num_epochs": 20}
-        assert asdict(defaults) == before
-
-    def test_config_rejects_negative_checkpoint_retention(self):
-        """Rejects an invalid retention budget before training can create checkpoints."""
-        with pytest.raises(ValueError, match="checkpoint_top_k"):
-            train.TrainConfig(checkpoint_top_k=-1)
-
-    @pytest.mark.parametrize("value", (0, -1))
-    def test_config_rejects_nonpositive_flow_steps(self, value):
-        """Prevents invalid integration budgets from reaching rollout sampling."""
-        with pytest.raises(ValueError, match="flow_num_steps must be positive"):
-            train.TrainConfig(flow_num_steps=value)
-
     def test_normalizer_state_does_not_share_storage(self):
         """Normalizer serialization isolates mutable statistics.
 
@@ -300,8 +257,11 @@ def test_loaded_policy_starts_a_fresh_training_run(policy_type, tmp_path):
             if steps == 0:
                 # Both entry paths must start with new optimizer history.
                 assert len(optimizer.state) == 0
-                assert optimizer.param_groups[0]["lr"] == config.lr
-                assert optimizer.param_groups[0]["weight_decay"] == config.weight_decay
+                assert optimizer.param_groups[0]["lr"] == config.optimization.lr
+                assert (
+                    optimizer.param_groups[0]["weight_decay"]
+                    == config.optimization.weight_decay
+                )
                 if expected_model is not None:
                     assert model.config == expected_model.config
                     for key, value in expected_model.state_dict().items():
@@ -339,7 +299,7 @@ def test_loaded_policy_starts_a_fresh_training_run(policy_type, tmp_path):
             checkpoints,
         ):
             assert mean_reward == 0.5
-            assert top_k == config.checkpoint_top_k
+            assert top_k == config.checkpoints.top_k
             save_policy(target, model, normalizer, flow_num_steps=flow_num_steps)
             return set()
 
@@ -367,52 +327,48 @@ def test_loaded_policy_starts_a_fresh_training_run(policy_type, tmp_path):
             train.run_training(config)
 
         # Four training episodes, each containing six padded samples.
-        expected_steps = config.num_epochs * (24 // config.batch_size)
+        expected_steps = config.optimization.num_epochs * (
+            24 // config.optimization.batch_size
+        )
         assert steps == expected_steps
         assert evaluate.call_count == 1
         assert save_artifact.call_count == 1
         assert save_artifact.call_args.kwargs["step"] == expected_steps
         restored, normalizer, inference = load_policy(target)
         assert evaluate.call_args.kwargs["chunk_size"] == restored.chunk_size
-        assert inference["flow_num_steps"] == config.flow_num_steps
+        assert inference["flow_num_steps"] == config.evaluation.flow_num_steps
         return restored, normalizer, target
 
     original, original_stats, path = run(
         f"{policy_type}-fresh",
         train.TrainConfig(
-            policy_type=policy_type,
-            hidden_dims=(8,),
-            chunk_size=2,
-            num_epochs=1,
-            batch_size=4,
-            lr=3e-4,
-            log_interval=4,
-            validation_interval=100,
-            eval_interval=100,
-            num_video_episodes=0,
-            flow_num_steps=3,
+            model=ModelConfig(policy_type=policy_type, hidden_dims=(8,), chunk_size=2),
+            optimization=OptimizationConfig(num_epochs=1, batch_size=4, lr=3e-4),
+            logging=LoggingConfig(interval=4),
+            evaluation=EvaluationConfig(
+                validation_interval=100,
+                interval=100,
+                num_video_episodes=0,
+                flow_num_steps=3,
+            ),
         ),
     )
     trained, stats, _ = run(
         f"{policy_type}-loaded",
         train.TrainConfig(
-            init_from=path,
-            # These new-model settings must not replace the
-            # loaded architecture or its action horizon.
-            policy_type="flow" if policy_type == "mse" else "mse",
-            hidden_dims=(16, 16),
-            chunk_size=5,
-            num_epochs=2,
-            batch_size=3,
-            lr=1e-3,
-            weight_decay=0.01,
-            seed=8,
-            data_split_variation=9,
-            log_interval=5,
-            validation_interval=100,
-            eval_interval=100,
-            num_video_episodes=0,
-            flow_num_steps=4,
+            warm_start=path,
+            model=None,
+            optimization=OptimizationConfig(
+                num_epochs=2, batch_size=3, lr=1e-3, weight_decay=0.01
+            ),
+            randomness=RandomnessConfig(seed=8, data_split_variation=9),
+            logging=LoggingConfig(interval=5),
+            evaluation=EvaluationConfig(
+                validation_interval=100,
+                interval=100,
+                num_video_episodes=0,
+                flow_num_steps=4,
+            ),
         ),
         expected_model=original,
     )

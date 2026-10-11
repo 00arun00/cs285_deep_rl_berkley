@@ -3,29 +3,41 @@
 from io import StringIO
 from pathlib import Path
 
+from rich.console import Console
+
+from hw1_imitation.config import (
+    CheckpointConfig,
+    EvaluationConfig,
+    LoggingConfig,
+    OptimizationConfig,
+    TrainConfig,
+)
 from hw1_imitation.model import PolicyConfig, build_policy
 from hw1_imitation.randomness import RandomStreamFactory, StreamId
-from hw1_imitation.train import TrainConfig, build_training_summary
-from rich.console import Console
+from hw1_imitation.reporting import build_training_summary
 
 from .summary_helpers import summary_row_value
 
 
 class TestTrainingSummary:
     def summary(self, config=None, policy_type="mse"):
+        model = build_policy(
+            PolicyConfig(
+                policy_type=policy_type,
+                state_dim=5,
+                action_dim=2,
+                chunk_size=8,
+                hidden_dims=(256, 256, 256),
+            ),
+            cpu_generator=RandomStreamFactory(42).torch(
+                StreamId.MODEL_INIT,
+            ),
+        )
         return dict(
             config=config or TrainConfig(),
-            model=build_policy(
-                PolicyConfig(
-                    policy_type=policy_type,
-                    state_dim=5,
-                    action_dim=2,
-                    chunk_size=8,
-                    hidden_dims=(256, 256, 256),
-                ),
-                cpu_generator=RandomStreamFactory(42).torch(
-                    StreamId.MODEL_INIT,
-                ),
+            architecture=model.config,
+            trainable_parameters=sum(
+                p.numel() for p in model.parameters() if p.requires_grad
             ),
             run_name="seed_42_[blue]literal[/blue]",
             device="cpu",
@@ -51,10 +63,10 @@ class TestTrainingSummary:
         rendered = self.render(
             self.summary(
                 config=TrainConfig(
-                    num_epochs=7,
-                    eval_interval=123,
-                    eval_episodes=5,
-                    final_eval_episodes=50,
+                    optimization=OptimizationConfig(num_epochs=7),
+                    evaluation=EvaluationConfig(
+                        interval=123, episodes=5, final_episodes=50
+                    ),
                 )
             )
         )
@@ -83,11 +95,9 @@ class TestTrainingSummary:
         summary."""
         summary = self.summary(
             config=TrainConfig(
-                init_from=Path("/tmp/policy.pt"),
-                policy_type="mse",
-                hidden_dims=(17,),
-                chunk_size=3,
-                flow_num_steps=7,
+                warm_start=Path("/tmp/policy.pt"),
+                model=None,
+                evaluation=EvaluationConfig(flow_num_steps=7),
             ),
             policy_type="flow",
         )
@@ -110,10 +120,9 @@ class TestTrainingSummary:
         video budget."""
         summary = self.summary(
             config=TrainConfig(
-                log_csv=False,
-                log_wandb=False,
-                save_checkpoints=False,
-                num_video_episodes=0,
+                logging=LoggingConfig(csv=False, wandb=False),
+                checkpoints=CheckpointConfig(enabled=False),
+                evaluation=EvaluationConfig(num_video_episodes=0),
             )
         )
         rendered = self.render(summary)
@@ -124,8 +133,8 @@ class TestTrainingSummary:
         enabled = dict(
             summary,
             config=TrainConfig(
-                checkpoint_top_k=0,
-                num_video_episodes=150,
+                checkpoints=CheckpointConfig(top_k=0),
+                evaluation=EvaluationConfig(num_video_episodes=150),
             ),
         )
         rendered = self.render(enabled)

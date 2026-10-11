@@ -1,5 +1,13 @@
 """Training reports actual loss windows and unresolved checkpoint cleanup."""
 
+from hw1_imitation.config import (
+    CheckpointConfig,
+    EvaluationConfig,
+    LoggingConfig,
+    ModelConfig,
+    OptimizationConfig,
+)
+
 import logging
 from unittest.mock import patch
 
@@ -41,17 +49,17 @@ def run_training(tmp_path):
     return run
 
 
-def config(**kwargs):
+def config(*, num_epochs, batch_size, log_interval=100, save_checkpoints=True):
     return train.TrainConfig(
-        hidden_dims=(4,),
-        chunk_size=1,
-        num_video_episodes=0,
-        log_wandb=False,
-        log_csv=False,
-        show_summary=False,
-        validation_interval=100,
-        eval_interval=100,
-        **kwargs,
+        model=ModelConfig(hidden_dims=(4,), chunk_size=1),
+        evaluation=EvaluationConfig(
+            num_video_episodes=0, validation_interval=100, interval=100
+        ),
+        logging=LoggingConfig(
+            wandb=False, csv=False, show_summary=False, interval=log_interval
+        ),
+        optimization=OptimizationConfig(num_epochs=num_epochs, batch_size=batch_size),
+        checkpoints=CheckpointConfig(enabled=save_checkpoints),
     )
 
 
