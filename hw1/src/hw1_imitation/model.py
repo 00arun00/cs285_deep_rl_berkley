@@ -118,7 +118,7 @@ class SimpleMLP(nn.Sequential):
     ) -> None:
         for layer in self:
             if isinstance(layer, nn.Linear):
-                # Matches Linear's default distribution for positive fan-in.
+                # Matches nn.Linear's default distribution for positive fan-in.
                 bound = layer.in_features**-0.5
 
                 nn.init.uniform_(

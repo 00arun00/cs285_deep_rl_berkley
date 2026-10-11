@@ -106,7 +106,7 @@ class Episode:
             raise ValueError("states and actions should be of same number of timesteps")
 
         if len(self.states) == 0:
-            raise ValueError("episodes must have data for atleast 1 timestamp")
+            raise ValueError("episodes must have data for at least 1 timestamp")
 
         if self.actions.dtype != np.float32:
             raise TypeError(
@@ -191,7 +191,7 @@ class Normalizer:
         actions = [episode.actions for episode in episodes]
 
         if len(states) == 0 or len(actions) == 0:
-            raise ValueError("Normalization requires atleast one episode.")
+            raise ValueError("Normalization requires at least one episode.")
 
         states = np.concatenate(states, axis=0)
         actions = np.concatenate(actions, axis=0)

@@ -542,10 +542,10 @@ def run_training(config: TrainConfig) -> None:
                     validation_episodes=len(validation_episodes_subset),
                     train_samples=len(
                         cast(Sequence, train_loader.dataset)
-                    ),  # can be safely casted here since dataset does have len.
+                    ),  # can be safely cast here since dataset does have len.
                     validation_samples=len(
                         cast(Sequence, validation_loader.dataset)
-                    ),  # can be safely casted here since dataset does have len.
+                    ),  # can be safely cast here since dataset does have len.
                     steps_per_epoch=len(train_loader),
                 )
             )
