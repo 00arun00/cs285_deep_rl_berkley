@@ -46,7 +46,20 @@ config = compose_experiment(["model=flow", "train.optimization.lr=0.0001"])
 ```
 
 The `run` section controls `output_root` (default `exp/`) and an optional `name`.
-New run directories never overwrite existing ones.
+An explicit name selects exactly that directory and must be unused; unnamed runs
+get unique names. New run directories never overwrite existing ones.
+
+`launch_experiment(config, overrides=...)` owns run setup and calls
+`run_training(config.train, output_dir=...)`. The core trainer requires an existing
+directory; it does not select output paths. Both local and Modal entrypoints use
+the same setup function.
+
+Each run saves `config.json` (requested, resolved configuration),
+`overrides.json` (ordered launch overrides), `manifest.json` (invocation directory,
+start time, and parent checkpoint identity), and `run_facts.json` (actual model,
+device, dataset path, and split sizes). These files are written even when metric
+logging is disabled. They document the run, not a complete environment or dataset
+archive. Setup files remain available when training fails.
 
 ## Modal
 
@@ -103,6 +116,12 @@ so fresh-model settings cannot silently conflict. Direct Python callers use
 `TrainConfig(model=None, warm_start=Path(...), ...)`. New demonstrations must have
 compatible observation/action dimensions and meanings. Inference settings such
 as flow steps come from the new run's evaluation configuration.
+
+Run setup copies the parent checkpoint to `initial_policy.pt`, records its original
+absolute path and SHA-256 digest in the manifest, and loads that preserved copy.
+The requested config retains the original path. This keeps lineage intact if the
+parent run later deletes its checkpoint. The input copy is outside latest + top-K
+retention of the new run's output checkpoints.
 
 Policy checkpoints contain architecture, CPU weights, normalization, and inference
 defaults. They are written atomically and loaded with `weights_only=True`. They do

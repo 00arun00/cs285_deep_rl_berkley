@@ -640,7 +640,6 @@ class TestRandomnessIntegration:
                 logging=LoggingConfig(wandb=False, csv=False, show_summary=False),
             )
             with (
-                patch.object(train, "LOGDIR_PREFIX", str(root)),
                 patch.object(train, "download_pusht", return_value=root),
                 patch.object(train, "load_episodes_dataset", return_value=episodes),
                 patch.object(
@@ -663,7 +662,9 @@ class TestRandomnessIntegration:
             ):
                 # Run real training, validation, and rollout evaluation. Only
                 # external data/environment boundaries and observation are patched.
-                train.run_training(config)
+                output_dir = root / "run"
+                output_dir.mkdir(parents=True)
+                train.run_training(config, output_dir=output_dir)
             expected_validation_calls = sum(
                 step % validation_interval == 0 or step == 12 for step in range(1, 13)
             )

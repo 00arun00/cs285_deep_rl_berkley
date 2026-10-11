@@ -304,7 +304,6 @@ def test_loaded_policy_starts_a_fresh_training_run(policy_type, tmp_path):
             return set()
 
         with (
-            patch.object(train, "LOGDIR_PREFIX", str(root / name)),
             patch.object(train, "download_pusht", return_value=root),
             patch.object(train, "load_episodes_dataset", return_value=episodes),
             patch.object(
@@ -324,7 +323,9 @@ def test_loaded_policy_starts_a_fresh_training_run(policy_type, tmp_path):
             patch.object(train, "train_step", side_effect=step),
         ):
             wandb_init.return_value.__enter__.return_value.offline = False
-            train.run_training(config)
+            output_dir = root / name
+            output_dir.mkdir(parents=True)
+            train.run_training(config, output_dir=output_dir)
 
         # Four training episodes, each containing six padded samples.
         expected_steps = config.optimization.num_epochs * (
@@ -334,7 +335,15 @@ def test_loaded_policy_starts_a_fresh_training_run(policy_type, tmp_path):
         assert evaluate.call_count == 1
         assert save_artifact.call_count == 1
         assert save_artifact.call_args.kwargs["step"] == expected_steps
+        import json
+
+        facts = json.loads((output_dir / "run_facts.json").read_text())
+        assert facts["normalization"] == (
+            "training_data" if config.warm_start is None else "checkpoint"
+        )
+        assert facts["train_episodes"] == 4
         restored, normalizer, inference = load_policy(target)
+        assert facts["model"]["chunk_size"] == restored.chunk_size
         assert evaluate.call_args.kwargs["chunk_size"] == restored.chunk_size
         assert inference["flow_num_steps"] == config.evaluation.flow_num_steps
         return restored, normalizer, target

@@ -34,7 +34,6 @@ def run_training(tmp_path):
 
     def run(config):
         with (
-            patch.object(train, "LOGDIR_PREFIX", str(tmp_path)),
             patch.object(train, "download_pusht", return_value=tmp_path),
             patch.object(train, "load_episodes_dataset", return_value=episodes),
             patch.object(
@@ -44,7 +43,9 @@ def run_training(tmp_path):
                 train, "evaluate_policy", return_value=EvaluationResults(0.5, 1, ())
             ),
         ):
-            train.run_training(config)
+            output_dir = tmp_path / "run"
+            output_dir.mkdir(parents=True)
+            train.run_training(config, output_dir=output_dir)
 
     return run
 

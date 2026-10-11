@@ -100,7 +100,6 @@ def test_all_output_combinations(
     with (
         patch.object(train, "train_step", side_effect=step),
         patch.object(train, "compute_validation_loss", side_effect=validate),
-        patch.object(train, "LOGDIR_PREFIX", str(root)),
         patch.object(train, "download_pusht", return_value=root),
         patch.object(train, "load_episodes_dataset", return_value=episodes),
         patch.object(
@@ -119,7 +118,9 @@ def test_all_output_combinations(
         run = initialize.return_value.__enter__.return_value
         run.offline = False
         run.id = "test"
-        train.run_training(config)
+        output_dir = root / "run"
+        output_dir.mkdir(parents=True)
+        train.run_training(config, output_dir=output_dir)
 
     captured = capsys.readouterr()
     if show_summary:

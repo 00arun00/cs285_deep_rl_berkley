@@ -79,7 +79,6 @@ class TestEvaluationBudget:
 
         root = tmp_path
         with (
-            patch.object(train, "LOGDIR_PREFIX", str(root)),
             patch.object(train, "download_pusht", return_value=root),
             patch.object(train, "load_episodes_dataset", return_value=episodes),
             patch.object(
@@ -92,6 +91,8 @@ class TestEvaluationBudget:
             ),
             patch.object(train, "train_step", side_effect=step),
         ):
-            train.run_training(config)
+            output_dir = root / "run"
+            output_dir.mkdir(parents=True)
+            train.run_training(config, output_dir=output_dir)
 
         assert evaluations == expected

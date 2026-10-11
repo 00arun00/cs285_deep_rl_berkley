@@ -7,8 +7,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from hw1_imitation import cli, modal_train, train
-from hw1_imitation.config import TrainConfig
+from hw1_imitation import cli, modal_train, run_setup
+from hw1_imitation.config import ExperimentConfig
 
 
 def test_hydra_cli_dispatch(tmp_path, monkeypatch, caplog):
@@ -26,14 +26,16 @@ def test_hydra_cli_dispatch(tmp_path, monkeypatch, caplog):
     )
 
     def observe(config, **kwargs):
-        assert isinstance(config, TrainConfig)
-        assert config.model.policy_type == "flow"
-        assert config.data.dir == Path("relative")
-        assert kwargs == {"output_root": Path("exp"), "run_name": "example"}
+        assert isinstance(config, ExperimentConfig)
+        assert config.train.model.policy_type == "flow"
+        assert config.train.data.dir == Path("relative")
+        assert config.run.output_root == Path("exp")
+        assert config.run.name == "example"
+        assert kwargs["overrides"] == sys.argv[1:]
         assert Path.cwd() == tmp_path
         logging.warning("visible training warning")
 
-    with patch.object(train, "run_training", side_effect=observe) as run:
+    with patch.object(run_setup, "launch_experiment", side_effect=observe) as run:
         cli.main()
     run.assert_called_once()
     assert "visible training warning" in caplog.text
@@ -65,12 +67,13 @@ def test_modal_composes_then_trains_and_commits(overrides, path, root):
     events = []
 
     def observe(config, **kwargs):
-        assert config.data.dir == Path(path)
-        assert kwargs["output_root"] == Path(root)
+        assert config.train.data.dir == Path(path)
+        assert config.run.output_root == Path(root)
+        assert kwargs["overrides"] == ["runtime=modal", *overrides]
         events.append("train")
 
     with (
-        patch.object(train, "run_training", side_effect=observe),
+        patch.object(run_setup, "launch_experiment", side_effect=observe),
         patch.object(
             modal_train.volume, "commit", side_effect=lambda: events.append("commit")
         ),
@@ -84,7 +87,7 @@ def test_modal_composes_then_trains_and_commits(overrides, path, root):
 def test_modal_failure_does_not_commit(failure):
     with (
         patch.object(
-            train, "run_training", side_effect=RuntimeError("training failed")
+            run_setup, "launch_experiment", side_effect=RuntimeError("training failed")
         ) as run,
         patch.object(modal_train.volume, "commit") as commit,
     ):

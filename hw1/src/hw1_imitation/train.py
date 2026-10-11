@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Sequence
 from contextlib import nullcontext
 from dataclasses import asdict
-from datetime import datetime
 from pathlib import Path
 from typing import cast
 
@@ -35,8 +35,6 @@ from hw1_imitation.logging_utils import ExperimentLogger
 from hw1_imitation.model import BasePolicy, PolicyConfig, build_policy
 from hw1_imitation.randomness import RandomStreamFactory, StreamId
 from hw1_imitation.reporting import build_training_summary
-
-LOGDIR_PREFIX = "exp"
 
 
 def build_loaders(
@@ -114,9 +112,10 @@ def train_step(
     return loss.detach()
 
 
-def run_training(
-    config: TrainConfig, *, output_root: Path | None = None, run_name: str | None = None
-) -> None:
+def run_training(config: TrainConfig, *, output_dir: Path) -> None:
+    """Train in an existing directory prepared by the caller."""
+    if not output_dir.is_dir():
+        raise ValueError("output_dir must be an existing directory")
     streams = RandomStreamFactory(root_seed=config.randomness.seed)
 
     device = torch.accelerator.current_accelerator()
@@ -200,16 +199,24 @@ def run_training(
     )
     global_step = 0
 
-    # Setup logging
-    exp_name = (
-        f"seed_{config.randomness.seed}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    log_dir = output_dir
+    exp_name = output_dir.name
+    (output_dir / "run_facts.json").write_text(
+        json.dumps(
+            {
+                "model": asdict(model.config),
+                "device": str(device),
+                "dataset_path": str(zarr_path.resolve()),
+                "normalization": "checkpoint" if config.warm_start else "training_data",
+                "train_episodes": len(train_episodes_subset),
+                "validation_episodes": len(validation_episodes_subset),
+                "steps_per_epoch": len(train_loader),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
     )
-    if run_name is not None:
-        exp_name += f"_{run_name}"
-
-    # The training driver owns the directory and all output lifetimes.
-    log_dir = (Path(LOGDIR_PREFIX) if output_root is None else output_root) / exp_name
-    log_dir.mkdir(parents=True, exist_ok=False)
 
     total_steps = config.optimization.num_epochs * len(train_loader)
     loss_sum = 0.0

@@ -1,6 +1,7 @@
 """Hydra is the local configuration frontend; training imports stay lazy."""
 
 import hydra
+from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig
 
 from hw1_imitation.config_composition import experiment_from_hydra, register_defaults
@@ -9,13 +10,9 @@ from hw1_imitation.config_composition import experiment_from_hydra, register_def
 @hydra.main(version_base="1.3", config_path="conf", config_name="config")
 def _main(config: DictConfig) -> None:
     experiment = experiment_from_hydra(config)
-    from hw1_imitation.train import run_training
+    from hw1_imitation.run_setup import launch_experiment
 
-    run_training(
-        experiment.train,
-        output_root=experiment.run.output_root,
-        run_name=experiment.run.name,
-    )
+    launch_experiment(experiment, overrides=HydraConfig.get().overrides.task)
 
 
 def main() -> None:

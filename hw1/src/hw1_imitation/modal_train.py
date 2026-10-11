@@ -69,10 +69,9 @@ env = {
     cpu=DEFAULT_CPU,
 )
 def train_remote(*args: str) -> None:
-    config = compose_experiment(["runtime=modal", *args])
-    from hw1_imitation.train import run_training
+    overrides = ["runtime=modal", *args]
+    config = compose_experiment(overrides)
+    from hw1_imitation.run_setup import launch_experiment
 
-    run_training(
-        config.train, output_root=config.run.output_root, run_name=config.run.name
-    )
+    launch_experiment(config, overrides=overrides)
     volume.commit()
