@@ -134,6 +134,21 @@ For standalone inference, `load_policy(path, device=...)` returns the model in
 evaluation mode, its normalizer, and inference settings. Normalize raw observations,
 call `model.sample_actions(..., generator=..., num_steps=...)`, then denormalize actions.
 
+## Programmatic results
+
+`launch_experiment(...)` and the core `run_training(...)` return a frozen
+`TrainingResult` after tracking and progress contexts close. It contains the output
+directory, actual optimizer steps and examples processed, final evaluation,
+retained latest/best checkpoint paths, and unresolved checkpoint cleanup steps.
+Counts exclude dropped incomplete batches.
+The Modal function returns the same result after committing its volume; its paths
+refer to files in the remote volume, not local downloads.
+
+Both checkpoint paths are absent when saving is disabled. Best is absent for
+latest-only retention; ties favor earlier steps. Pending deletions are excluded
+because their local files may already be gone. Paths remain owned by the run.
+Exceptions propagate instead of returning a successful result.
+
 ## Checks
 
 GitHub Actions runs `HW1 checks` for PRs targeting any branch and pushes to `main`.

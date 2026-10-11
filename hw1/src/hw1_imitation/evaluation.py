@@ -21,25 +21,10 @@ from hw1_imitation.checkpoint import CHECKPOINT_VERSION, save_policy
 from hw1_imitation.data import Normalizer
 from hw1_imitation.logging_utils import open_video_writer
 from hw1_imitation.model import BasePolicy
+from hw1_imitation.results import EvaluationResults
 from hw1_imitation.randomness import RandomStreamFactory, StreamId
 
 NUM_EVAL_EPISODES = 100
-
-
-@dataclass(frozen=True, slots=True)
-class EvaluationResults:
-    """Measurements and completed video paths from one evaluation.
-
-    Paths refer to persistent files owned by the experiment.
-    Consumers may read them but do not acquire deletion ownership.
-
-    episode_max_rewards follows evaluation episode-index order.
-    """
-
-    mean_reward: float
-    num_episodes: int
-    video_paths: tuple[Path, ...]
-    episode_max_rewards: tuple[float, ...]
 
 
 @dataclass(frozen=True, slots=True)

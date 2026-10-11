@@ -1,5 +1,7 @@
 """Prepare one run and call the trainer; shared by local and Modal launchers."""
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -11,10 +13,12 @@ from uuid import uuid4
 
 from hw1_imitation.config import ExperimentConfig, config_to_dict
 
+from hw1_imitation.results import TrainingResult
+
 
 def launch_experiment(
     config: ExperimentConfig, *, overrides: Sequence[str] = ()
-) -> None:
+) -> TrainingResult:
     """Save requested configuration and lineage before starting a new run.
 
     Explicit names must be unused. Generated names use system entropy without
@@ -68,4 +72,4 @@ def launch_experiment(
 
     from hw1_imitation.train import run_training
 
-    run_training(training, output_dir=output_dir)
+    return run_training(training, output_dir=output_dir)

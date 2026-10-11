@@ -1,8 +1,12 @@
+from __future__ import annotations
+
 from pathlib import Path
 
 import modal
 
 from hw1_imitation.config_composition import compose_experiment
+
+from hw1_imitation.results import TrainingResult
 
 
 APP_NAME = "hw1-imitation"
@@ -68,10 +72,11 @@ env = {
     gpu=DEFAULT_GPU,
     cpu=DEFAULT_CPU,
 )
-def train_remote(*args: str) -> None:
+def train_remote(*args: str) -> TrainingResult:
     overrides = ["runtime=modal", *args]
     config = compose_experiment(overrides)
     from hw1_imitation.run_setup import launch_experiment
 
-    launch_experiment(config, overrides=overrides)
+    result = launch_experiment(config, overrides=overrides)
     volume.commit()
+    return result

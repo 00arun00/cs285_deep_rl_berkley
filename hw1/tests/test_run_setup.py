@@ -4,7 +4,7 @@ from dataclasses import replace
 import hashlib
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, sentinel
 
 import pytest
 from hw1_imitation import train
@@ -35,10 +35,12 @@ def test_launch_saves_requested_config_and_overrides_before_training(
         assert manifest["invocation_dir"] == str(tmp_path)
         assert manifest["output_dir"] == str(output_dir)
         assert Path.cwd() == tmp_path
+        return sentinel.training_result
 
     with patch.object(train, "run_training", side_effect=observe) as run:
-        launch_experiment(config, overrides=overrides)
+        result = launch_experiment(config, overrides=overrides)
     run.assert_called_once()
+    assert result is sentinel.training_result
 
 
 def test_named_run_collision_preserves_existing_outputs(tmp_path):

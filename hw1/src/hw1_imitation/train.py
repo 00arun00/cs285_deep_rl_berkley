@@ -33,6 +33,7 @@ from hw1_imitation.evaluation import (
 )
 from hw1_imitation.logging_utils import ExperimentLogger
 from hw1_imitation.model import BasePolicy, PolicyConfig, build_policy
+from hw1_imitation.results import TrainingResult
 from hw1_imitation.randomness import RandomStreamFactory, StreamId
 from hw1_imitation.reporting import build_training_summary
 
@@ -112,8 +113,8 @@ def train_step(
     return loss.detach()
 
 
-def run_training(config: TrainConfig, *, output_dir: Path) -> None:
-    """Train in an existing directory prepared by the caller."""
+def run_training(config: TrainConfig, *, output_dir: Path) -> TrainingResult:
+    """Train in a prepared directory and return after tracking/progress close."""
     if not output_dir.is_dir():
         raise ValueError("output_dir must be an existing directory")
     streams = RandomStreamFactory(root_seed=config.randomness.seed)
@@ -198,6 +199,7 @@ def run_training(config: TrainConfig, *, output_dir: Path) -> None:
         weight_decay=config.optimization.weight_decay,
     )
     global_step = 0
+    examples_processed = 0
 
     log_dir = output_dir
     exp_name = output_dir.name
@@ -313,6 +315,7 @@ def run_training(config: TrainConfig, *, output_dir: Path) -> None:
                     # number of examples before combining it with other batches.
 
                     batch_examples = state.shape[0]
+                    examples_processed += batch_examples
                     loss_sum += loss.item() * batch_examples
                     window_examples_count += batch_examples
 
@@ -434,3 +437,25 @@ def run_training(config: TrainConfig, *, output_dir: Path) -> None:
                 "Extra local files or W&B artifacts may remain.",
                 sorted(pending_cleanup),
             )
+
+    retained = {
+        step: record
+        for step, record in checkpoints.items()
+        if step not in pending_cleanup
+    }
+    latest = retained.get(global_step)
+    best_step = (
+        min(retained, key=lambda step: (-retained[step].score, step))
+        if config.checkpoints.top_k > 0 and retained
+        else None
+    )
+    # Positive epochs and a nonempty loader guarantee the final evaluation.
+    return TrainingResult(
+        output_dir=log_dir,
+        optimizer_steps=global_step,
+        examples_processed=examples_processed,
+        final_evaluation=result,
+        latest_checkpoint=latest.path if latest is not None else None,
+        best_checkpoint=retained[best_step].path if best_step is not None else None,
+        pending_cleanup_steps=tuple(sorted(pending_cleanup)),
+    )

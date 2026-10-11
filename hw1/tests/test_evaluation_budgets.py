@@ -98,6 +98,12 @@ class TestEvaluationBudget:
         ):
             output_dir = root / "run"
             output_dir.mkdir(parents=True)
-            train.run_training(config, output_dir=output_dir)
+            result = train.run_training(config, output_dir=output_dir)
 
         assert evaluations == expected
+        assert result.optimizer_steps == steps
+        assert result.examples_processed == steps * batch_size
+        assert result.final_evaluation.num_episodes == 50
+        assert result.final_evaluation.mean_reward == 0.5
+        assert result.latest_checkpoint is None
+        assert result.best_checkpoint is None

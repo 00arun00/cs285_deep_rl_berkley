@@ -4,7 +4,7 @@ import logging
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, sentinel
 
 import pytest
 from hw1_imitation import cli, modal_train, run_setup
@@ -55,6 +55,36 @@ def test_config_inspection_imports_no_training_dependencies(tmp_path):
     assert not list(tmp_path.iterdir())
 
 
+def test_modal_cli_can_resolve_entrypoint_annotations():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "modal",
+            "run",
+            "-m",
+            "hw1_imitation.modal_train",
+            "--help",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "Usage:" in result.stdout
+
+
+def test_result_types_import_without_training_dependencies():
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; import hw1_imitation.results; "
+            "assert not {'torch','modal','wandb'} & sys.modules.keys()",
+        ],
+        check=True,
+    )
+
+
 @pytest.mark.parametrize(
     "overrides,path,root",
     [
@@ -71,6 +101,7 @@ def test_modal_composes_then_trains_and_commits(overrides, path, root):
         assert config.run.output_root == Path(root)
         assert kwargs["overrides"] == ["runtime=modal", *overrides]
         events.append("train")
+        return sentinel.training_result
 
     with (
         patch.object(run_setup, "launch_experiment", side_effect=observe),
@@ -78,8 +109,9 @@ def test_modal_composes_then_trains_and_commits(overrides, path, root):
             modal_train.volume, "commit", side_effect=lambda: events.append("commit")
         ),
     ):
-        modal_train.train_remote.local(*overrides)
+        result = modal_train.train_remote.local(*overrides)
     assert events == ["train", "commit"]
+    assert result is sentinel.training_result
     assert list(modal_train.app.registered_functions) == ["train_remote"]
 
 
