@@ -1,6 +1,6 @@
 """Numerical contracts checked against small, independent analytical answers."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import gymnasium as gym
 import numpy as np
@@ -160,8 +160,71 @@ def test_evaluation_score_is_mean_of_episode_maxima(end_signal, rewards):
         sum(max(episode) for episode in rewards) / len(rewards)
     )
     assert result.num_episodes == len(rewards)
+    assert result.episode_max_rewards == tuple(
+        float(max(episode)) for episode in rewards
+    )
+    assert len(result.episode_max_rewards) == result.num_episodes
     assert env.episode + 1 == len(rewards)
     assert env.closed
+
+
+def test_legacy_evaluation_results_can_omit_episode_scores():
+    result = evaluation.EvaluationResults(0.5, 2, ())
+    assert result.mean_reward == 0.5
+    assert result.num_episodes == 2
+    assert result.episode_max_rewards == ()
+
+
+@pytest.mark.parametrize("recording_fails", [False, True])
+def test_recorded_evaluation_closes_resources_before_returning_or_raising(
+    recording_fails, tmp_path
+):
+    """Completed scores cannot escape open recording/environment resources."""
+    env = ScriptedRewardsEnv([[0.25, 0.75]], "terminated")
+    policy = zero_policy("mse")
+    policy.train()
+    normalizer = Normalizer(
+        np.zeros(3, dtype=np.float32),
+        np.ones(3, dtype=np.float32),
+        np.zeros(1, dtype=np.float32),
+        np.ones(1, dtype=np.float32),
+    )
+    recording = MagicMock()
+    if recording_fails:
+        recording.__enter__.return_value.append_data.side_effect = RuntimeError(
+            "recording failed"
+        )
+
+    def evaluate():
+        return evaluation.evaluate_policy(
+            policy,
+            normalizer,
+            torch.device("cpu"),
+            chunk_size=2,
+            video_size=(16, 16),
+            num_video_episodes=1,
+            flow_num_steps=1,
+            streams=RandomStreamFactory(42),
+            num_eval_episodes=1,
+            video_dir=tmp_path,
+        )
+
+    with (
+        patch.object(evaluation.gym, "make", return_value=env),
+        patch.object(env, "render", return_value=np.zeros((16, 16, 3), dtype=np.uint8)),
+        patch.object(evaluation, "open_video_writer", return_value=recording),
+    ):
+        if recording_fails:
+            with pytest.raises(RuntimeError, match="recording failed"):
+                evaluate()
+        else:
+            result = evaluate()
+            assert result.episode_max_rewards == (0.75,)
+            assert result.video_paths == (tmp_path / "episode_0000000.mp4",)
+
+    recording.__exit__.assert_called_once()
+    assert env.closed
+    assert policy.training
 
 
 @pytest.mark.parametrize("batch_size,horizon,action_dim", [(1, 1, 1), (3, 2, 2)])

@@ -154,6 +154,10 @@ on the final training step, only the final evaluation runs, using
 `--final-eval-episodes`. Evaluation intervals, video recording, and checkpoint
 schedules are unchanged. Video count is capped by the rollout episode count.
 
+The rollout score is the mean of each episode's maximum reward. Evaluation also
+returns those individual maxima in episode-index order through
+`EvaluationResults.episode_max_rewards`; the aggregate calculation is unchanged.
+
 ## Reusing policy checkpoints
 
 CSV metrics, W&B reporting, and checkpoint saving are enabled by default and
