@@ -177,8 +177,9 @@ This workflow does not attempt to reproduce an interrupted training trajectory.
 
 ### Checks
 
-GitHub Actions runs the HW1 checks on every pull request targeting `main` and
-every push to `main`, using Linux and the Python version in `.python-version`.
+GitHub Actions runs the HW1 checks on every pull request targeting `main` or
+an `aj/*` stacked branch and every push to `main`, using Linux and the Python
+version in `.python-version`.
 The `HW1 checks` job installs locked dependencies, runs Ruff lint and test
 formatting checks, and runs pytest. The accelerator test skips when no accelerator
 is available. The job is required by the `main` branch merge rules.

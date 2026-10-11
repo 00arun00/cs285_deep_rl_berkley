@@ -2,7 +2,7 @@ name: HW1 CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'aj/**']
   push:
     branches: [main]
 
