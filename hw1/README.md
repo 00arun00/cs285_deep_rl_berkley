@@ -98,6 +98,30 @@ uv run modal run src/hw1_imitation/modal_train.py
 
 This will build a Modal container and launch training remotely. You can pass the same flags as the local training script. If you are logged into WandB locally, your API key will be automatically forwarded to the Modal container.
 
+To use Hydra presets and `key=value` overrides on Modal, use the separate entry
+point from `hw1/`:
+
+```bash
+uv run modal run src/hw1_imitation/modal_hydra_train.py
+uv run modal run src/hw1_imitation/modal_hydra_train.py experiment=mse_baseline train.lr=0.0001
+uv run modal run src/hw1_imitation/modal_hydra_train.py policy=flow logging=local 'train.hidden_dims=[128,128]'
+```
+
+Both entry points reuse the same image, resources, volume, and training loop.
+The Hydra command selects `data=modal`, which extends the Push-T preset with
+`data_dir: /vol/data`. User overrides take precedence, including
+`train.data_dir=/vol/custom-data` or another `data` preset. Named experiments
+also retain `/vol/data` unless you override it. Inspect the corresponding
+configuration locally without launching Modal:
+
+```bash
+uv run -m hw1_imitation.hydra_train data=modal experiment=mse_baseline --cfg job --resolve
+```
+
+The original `modal_train.py` command continues to accept Tyro flags such as
+`--num-epochs 20`; the new command accepts Hydra overrides such as
+`train.num_epochs=20`. The volume is committed after successful training.
+
 Logs and checkpoints will be saved to a Modal volume called `hw1-imitation-volume`. To inspect the logs, you can use:
 
 ```bash

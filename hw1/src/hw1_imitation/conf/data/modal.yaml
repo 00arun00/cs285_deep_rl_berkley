@@ -1,0 +1,6 @@
+# @package train
+defaults:
+  - pusht
+  - _self_
+
+data_dir: /vol/data
