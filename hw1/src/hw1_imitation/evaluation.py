@@ -311,7 +311,7 @@ def evaluate_policy(
     )
 
     # Register cleanup before model inference or env stepping.
-    # There are evealuated LIFO.
+    # These are evaluated LIFO.
     with ExitStack() as resources:
         resources.callback(env.close)
         resources.callback(model.train, model.training)
@@ -438,7 +438,7 @@ def evaluate_policy(
 
             rewards.append(max_reward)
 
-            # Reached only after the rollout and writer clouser succeeded.
+            # Reached only after the rollout and writer closure succeeded.
             if video_path is not None:
                 video_paths.append(video_path)
 

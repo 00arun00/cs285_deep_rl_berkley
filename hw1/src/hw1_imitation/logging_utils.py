@@ -182,7 +182,7 @@ class ExperimentLogger:
 
         Successful submission does not guarantee remote synchronization.
 
-        NOTE: This is mosltly a dumb utility function
+        NOTE: This is mostly a dumb utility function
         """
         if self.run is None:
             return
