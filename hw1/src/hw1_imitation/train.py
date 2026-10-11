@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -63,6 +63,21 @@ class TrainingResult:
     latest_checkpoint: Path | None
     best_checkpoint: Path | None
     pending_cleanup_steps: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class TrainingEvaluation:
+    """Snapshot emitted after rollout logging and optional checkpoint retention.
+
+    The checkpoint exists at notification time; later retention may delete it.
+    is_final identifies the last scheduled evaluation, not successful run cleanup.
+    """
+
+    optimizer_steps: int
+    examples_processed: int
+    is_final: bool
+    evaluation: EvaluationResults
+    checkpoint: Path | None
 
 
 def build_training_summary(
@@ -298,9 +313,17 @@ def train_step(
 
 
 def run_training(
-    config: TrainConfig, *, output_root: Path | None = None
+    config: TrainConfig,
+    *,
+    output_root: Path | None = None,
+    on_evaluation: Callable[[TrainingEvaluation], None] | None = None,
 ) -> TrainingResult:
-    """Train under output_root (default: exp/) and return after resources close."""
+    """Train under output_root (default: exp/) and return after resources close.
+
+    on_evaluation observes completed evaluations after logging and optional
+    checkpoint saving. Its return value is ignored; exceptions propagate while
+    the existing tracking and progress contexts unwind.
+    """
     streams = RandomStreamFactory(root_seed=config.seed)
 
     device = torch.accelerator.current_accelerator()
@@ -592,6 +615,21 @@ def run_training(
                                 checkpoints=checkpoints,
                                 normalizer=normalizer,
                                 flow_num_steps=config.flow_num_steps,
+                            )
+
+                        if on_evaluation is not None:
+                            on_evaluation(
+                                TrainingEvaluation(
+                                    optimizer_steps=global_step,
+                                    examples_processed=examples_processed,
+                                    is_final=training_complete,
+                                    evaluation=result,
+                                    checkpoint=(
+                                        checkpoints[global_step].path
+                                        if config.save_checkpoints
+                                        else None
+                                    ),
+                                )
                             )
 
                         progress.set_description_str("Train")

@@ -81,6 +81,14 @@ excluded because their local files may already be gone. Periodic and final
 evaluation budgets and their existing retention comparisons are unchanged;
 this result does not introduce a holdout or a new checkpoint-selection rule.
 
+Programmatic callers can pass `on_evaluation=callback` to `run_training()` to
+observe each periodic or final evaluation after logging and checkpoint saving.
+The frozen `TrainingEvaluation` contains optimizer steps, examples processed,
+the evaluation result, and its checkpoint path when saving is enabled. Later
+retention may delete that checkpoint. `is_final` marks the final evaluation;
+run cleanup may still fail afterward. Callback return values are ignored, and
+callback exceptions propagate while the training contexts close.
+
 Programmatic callers can compose the packaged presets without launching a CLI:
 
 ```python
