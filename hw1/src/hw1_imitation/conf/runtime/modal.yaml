@@ -1,0 +1,6 @@
+# @package _global_
+train:
+  data:
+    dir: /vol/data
+run:
+  output_root: /vol/exp

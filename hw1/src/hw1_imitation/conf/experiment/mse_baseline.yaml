@@ -1,0 +1,8 @@
+# @package _global_
+defaults:
+  - override /model: mse
+  - override /architecture: mlp256
+  - override /optimization: adamw
+
+run:
+  name: mse-baseline

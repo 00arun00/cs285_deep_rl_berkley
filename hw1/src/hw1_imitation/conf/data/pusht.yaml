@@ -1,0 +1,3 @@
+# @package train.data
+dir: data
+pad_action_chunk_with_last_action: true

@@ -1,0 +1,23 @@
+defaults:
+  - experiment_defaults
+  - model: null
+  - architecture: null
+  - data: null
+  - optimization: null
+  - evaluation: null
+  - randomness: null
+  - logging: null
+  - initialization: null
+  - runtime: null
+  - _self_
+  - experiment: null
+  - override hydra/job_logging: none
+  - override hydra/hydra_logging: none
+
+# Run setup owns output allocation and snapshots for local and Modal execution.
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: .
+  output_subdir: null
