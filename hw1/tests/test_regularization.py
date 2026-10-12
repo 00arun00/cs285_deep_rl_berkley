@@ -131,6 +131,51 @@ class TestPolicyDropout:
         replay = RandomStreamFactory(5).torch(StreamId.TRAIN_LOSS)
         torch.testing.assert_close(loss(first), loss(replay), rtol=0, atol=0)
 
+    def test_eval_mode_disables_dropout_even_when_requested(self) -> None:
+        """model.eval() must disable dropout and draw nothing, like nn.Dropout.
+
+        The driver already relies on this: compute_validation_loss evaluates
+        under eval() mode, so requested dropout cannot leak into validation.
+        """
+        policy = make_policy()
+        policy.eval()
+        state, action_chunk = make_batch()
+        generator = RandomStreamFactory(6).torch(StreamId.TRAIN_LOSS)
+        before = generator.get_state().clone()
+
+        plain = policy.compute_loss(state, action_chunk, generator=generator)
+        requested = policy.compute_loss(
+            state, action_chunk, generator=generator, dropout_p=0.5
+        )
+        assert torch.equal(requested, plain)
+        assert torch.equal(generator.get_state(), before)
+
+    def test_train_mode_restores_dropout_application(self) -> None:
+        """Returning to train() mode re-enables requested dropout."""
+        policy = make_policy()
+        state, action_chunk = make_batch()
+        plain = policy.compute_loss(state, action_chunk, generator=torch.Generator())
+
+        policy.eval()
+        eval_loss = policy.compute_loss(
+            state, action_chunk, generator=torch.Generator(), dropout_p=0.5
+        )
+        assert torch.equal(eval_loss, plain)
+
+        policy.train()
+        generator = RandomStreamFactory(8).torch(StreamId.TRAIN_LOSS)
+        train_losses = [
+            policy.compute_loss(
+                state,
+                action_chunk,
+                generator=generator,
+                dropout_p=0.5,
+            )
+            for _ in range(2)
+        ]
+        assert not torch.equal(train_losses[0], plain)
+        assert not torch.equal(train_losses[0], train_losses[1])
+
     def test_dropout_gradients_flow_through_kept_units(self) -> None:
         """Backward propagation succeeds and updates every parameter tensor."""
         policy = make_policy()

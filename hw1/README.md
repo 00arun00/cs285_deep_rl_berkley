@@ -87,9 +87,10 @@ uv run python -m hw1_imitation.train \
 
 Dropout masks and state noise draw from their own caller-owned random streams
 (`TRAIN_LOSS` and `TRAIN_STATE_NOISE`), so runs replay exactly for a fixed
-`--seed` and per-stream `--*-variation` values. Validation loss and rollout
-evaluation never apply dropout or state noise. The startup summary and the W&B
-configuration both record the effective values.
+`--seed` and per-stream `--*-variation` values. Dropout applies only in
+training mode: validation loss and rollout evaluation run under `model.eval()`,
+which disables it even when a probability is configured. The startup summary
+and the W&B configuration both record the effective values.
 
 The sweep files search `dropout_p` over `[0.0, 0.1, 0.2, 0.3]` and
 `state_noise_std` over `[0.0, 0.01, 0.03, 0.1]` in addition to the existing

@@ -88,8 +88,9 @@ class BasePolicy(nn.Module, metaclass=abc.ABCMeta):
         Stochastic policies advance generator. Deterministic policies leave
         it untouched. The generator must match the sampling device.
 
-        dropout_p applies generator-driven dropout to hidden activations and
-        is intended for training only; 0.0 disables it and draws nothing.
+        dropout_p applies generator-driven dropout to hidden activations in
+        training mode only; model.eval() disables it and draws nothing, and
+        0.0 always disables it.
         """
 
     @abc.abstractmethod
@@ -152,14 +153,16 @@ class SimpleMLP(nn.Sequential):
     ) -> torch.Tensor:
         """Forward pass applying dropout after every hidden activation.
 
-        The output layer never receives dropout. With dropout_p = 0 this
-        reduces to plain forward() and draws nothing from the generator.
+        The output layer never receives dropout. Dropout applies only while
+        the module is in training mode: eval() disables it and draws nothing,
+        matching nn.Dropout conventions. With dropout_p = 0 or in eval mode
+        this reduces to plain forward() and draws nothing from the generator.
         The generator must match the device of x.
         """
         if not 0.0 <= dropout_p < 1.0:
             raise ValueError(f"dropout_p must be in [0, 1); got {dropout_p}")
 
-        if dropout_p == 0.0:
+        if dropout_p == 0.0 or not self.training:
             return self(x)
 
         layers = list(self)
@@ -225,7 +228,7 @@ class MSEPolicy(BasePolicy):
         state: torch.Tensor,
         action_chunk: torch.Tensor,
         *,
-        generator: torch.Generator,  # advances only when dropout_p > 0.
+        generator: torch.Generator,  # advances only in training with dropout_p > 0.
         dropout_p: float = 0.0,
     ) -> torch.Tensor:
         target = action_chunk.flatten(start_dim=1)
@@ -289,7 +292,7 @@ class FlowMatchingPolicy(BasePolicy):
             tensors=(state, interpolated_action_chunk, tau),
             dim=1,
         )
-        if dropout_p > 0.0:
+        if dropout_p > 0.0 and self.training:
             if generator is None:
                 raise ValueError(
                     "dropout_p > 0 requires a generator on the sampling device"
