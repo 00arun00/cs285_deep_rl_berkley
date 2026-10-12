@@ -201,3 +201,46 @@ Tests cover policy round trips, training, evaluation budgets, logging, checkpoin
 retention, and random-stream isolation. Data access, physics environments, and W&B
 services are mocked. An accelerator transfer test runs when hardware is available;
 the suite does not exercise GPU training or remote uploads.
+
+## Local W&B sweeps
+
+The MSE and flow search spaces live in `sweeps/mse.yaml` and
+`sweeps/flow.yaml`. They use Bayesian search and inherit omitted trainer defaults
+(including batch size 128, seed 42, and 100 periodic evaluation episodes).
+
+**Implementation status:** these configurations define the interface for the
+following implementation commits. They require JSON configuration input, plateau
+stopping, and best-checkpoint final evaluation before they can run.
+
+From `hw1`, register each sweep once:
+
+```bash
+uv run wandb sweep sweeps/mse.yaml
+uv run wandb sweep sweeps/flow.yaml
+```
+
+Use the sweep IDs printed by those commands to run sequential local trials:
+
+```bash
+uv run wandb agent --count 5 ENTITY/PROJECT/MSE_SWEEP_ID
+uv run wandb agent --count 5 ENTITY/PROJECT/FLOW_SWEEP_ID
+```
+
+Reuse the same ID to add trials later; `--count` is the number of additional
+trials for that agent invocation. No sweep-wide run cap is configured.
+Changing a local YAML file does not change an already registered sweep; register
+a new sweep to use a different search space.
+
+The maximum training budget is 1,000 epochs. Periodic rollouts run every 2,000
+training steps. Plateau patience starts at the first rollout at or after 100
+MSE epochs or 300 flow epochs; ten subsequent evaluations without a reward gain
+of at least 0.005 trigger stopping. Small gains accumulate relative to the last
+meaningful improvement. Checkpoint selection independently retains the highest
+observed reward, with earlier steps winning ties.
+
+On plateau or the epoch limit, evaluate the best checkpoint over 1,000 episodes
+and report `final/mean_reward`, the Bayesian objective. Final evaluation uses
+separate fixed random streams from checkpoint selection. This remains tuning
+data because the search observes the result, not a held-out test estimate.
+Weight decay is sampled log-uniformly from positive bounds; zero is excluded.
+Videos are disabled; retain the best checkpoint plus latest.
