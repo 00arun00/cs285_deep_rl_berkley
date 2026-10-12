@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 from collections.abc import Sequence
@@ -69,6 +70,7 @@ class TrainConfig:
     eval_interval: int = 10_000
     eval_episodes: int = 100
     final_eval_episodes: int = 100
+    final_eval_use_best_checkpoint: bool = False
 
     # None disables plateau stopping. Warm-up does not count toward patience.
     early_stopping_patience: int | None = None
@@ -147,6 +149,14 @@ class TrainConfig:
 
         if self.checkpoint_top_k < 0:
             raise ValueError("checkpoint_top_k must be nonnegative")
+
+        if self.final_eval_use_best_checkpoint and (
+            not self.save_checkpoints or self.checkpoint_top_k < 1
+        ):
+            raise ValueError(
+                "Best-checkpoint final evaluation requires save_checkpoints=True "
+                "and checkpoint_top_k >= 1"
+            )
 
         if self.num_video_episodes < 0:
             raise ValueError("num_video_episodes must be nonnegative")
@@ -273,6 +283,11 @@ def build_training_summary(
             f"warm-up {config.early_stopping_min_epochs} epochs; "
             f"minimum gain {config.early_stopping_min_delta:g}"
         ),
+    )
+    table.add_row(
+        "Final policy",
+        "Best checkpoint (separate evaluation streams)"
+        if config.final_eval_use_best_checkpoint else "Last training policy",
     )
     table.add_row("Validation", f"Every {config.validation_interval:,} steps + final")
     table.add_row(
@@ -688,7 +703,7 @@ def run_training(config: TrainConfig) -> None:
                             num_video_episodes=config.num_video_episodes,
                             num_eval_episodes=(
                                 config.final_eval_episodes
-                                if training_complete
+                                if training_complete and not config.final_eval_use_best_checkpoint
                                 else config.eval_episodes
                             ),
                             flow_num_steps=config.flow_num_steps,
@@ -754,12 +769,80 @@ def run_training(config: TrainConfig) -> None:
         if run is not None:
             run.summary["stop_reason"] = stop_reason
 
+        if config.final_eval_use_best_checkpoint:
+            finalize_best_checkpoint(
+                config=config,
+                checkpoints=checkpoints,
+                streams=streams,
+                device=device,
+                global_step=global_step,
+                stop_reason=stop_reason,
+                log_dir=log_dir,
+                run=run,
+            )
+
         if pending_cleanup:
             logging.warning(
                 "Training finished with checkpoint cleanup pending for steps %s. "
                 "Extra local files or W&B artifacts may remain.",
                 sorted(pending_cleanup),
             )
+
+
+def finalize_best_checkpoint(
+    *,
+    config: TrainConfig,
+    checkpoints: dict[int, CheckpointRecord],
+    streams: RandomStreamFactory,
+    device: torch.device,
+    global_step: int,
+    stop_reason: str,
+    log_dir: Path,
+    run: wandb.Run | None,
+) -> None:
+    """Evaluate the best retained policy once on separate final random streams.
+
+    Final scores inform hyperparameter search; they are not held-out test scores.
+    Preserve periodic selection scores and checkpoint ordering unchanged.
+    """
+    if not checkpoints:
+        raise RuntimeError("No checkpoint available for final evaluation")
+    best_step = min(
+        checkpoints, key=lambda step: (-checkpoints[step].score, step),
+    )
+    record = checkpoints[best_step]
+    model, normalizer, inference = load_policy(record.path, device=device)
+    result = evaluate_policy(
+        model=model,
+        normalizer=normalizer,
+        device=device,
+        chunk_size=model.chunk_size,
+        video_size=config.video_size,
+        num_video_episodes=0,
+        num_eval_episodes=config.final_eval_episodes,
+        flow_num_steps=inference["flow_num_steps"],
+        streams=streams,
+        env_variation=config.eval_env_variation,
+        policy_variation=config.eval_policy_variation,
+        final_evaluation=True,
+        video_dir=None,
+        show_progress=True,
+        progress_position=0,
+    )
+    metrics = {
+        "global_step": global_step,
+        "final/mean_reward": result.mean_reward,
+        "final/num_episodes": result.num_episodes,
+        "final/checkpoint_step": best_step,
+        "final/selection_mean_reward": record.score,
+    }
+    (log_dir / "final_eval.json").write_text(
+        json.dumps({**metrics, "stop_reason": stop_reason}, indent=2, allow_nan=False),
+        encoding="utf-8",
+    )
+    if run is not None:
+        run.log(metrics)
+        run.summary["stop_reason"] = stop_reason
 
 
 def main() -> None:

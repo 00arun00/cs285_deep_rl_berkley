@@ -241,6 +241,7 @@ def evaluate_policy(
     streams: RandomStreamFactory,
     env_variation: int = 0,
     policy_variation: int = 0,
+    final_evaluation: bool = False,
     video_dir: Path | None = None,
     num_eval_episodes: int = NUM_EVAL_EPISODES,
     show_progress: bool = False,
@@ -276,6 +277,7 @@ def evaluate_policy(
         streams: Stateless factory supplying indexed episode randomness.
         env_variation: Realization of evaluation environment randomness.
         policy_variation: Realization of evaluation policy randomness.
+        final_evaluation: Use separate final-evaluation random stream identities.
         video_dir: Existing directory required when recording videos.
         num_eval_episodes: Positive number of rollout episodes.
         show_progress: Show a temporary bar on an interactive terminal.
@@ -342,13 +344,13 @@ def evaluate_policy(
         for episode_index in range(num_eval_episodes):
             # Give each episode separately indexed environment and policy streams.
             env_seed = streams.seed(
-                StreamId.EVAL_ENV,
+                StreamId.FINAL_EVAL_ENV if final_evaluation else StreamId.EVAL_ENV,
                 variation=env_variation,
                 index=episode_index,
             )
 
             policy_generator = streams.torch(
-                StreamId.EVAL_POLICY,
+                StreamId.FINAL_EVAL_POLICY if final_evaluation else StreamId.EVAL_POLICY,
                 variation=policy_variation,
                 index=episode_index,
                 device=device,

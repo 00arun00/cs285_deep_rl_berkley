@@ -245,9 +245,15 @@ The MSE and flow search spaces live in `sweeps/mse.yaml` and
 `sweeps/flow.yaml`. They use Bayesian search and inherit omitted trainer defaults
 (including batch size 128, seed 42, and 100 periodic evaluation episodes).
 
-**Implementation status:** these configurations define the interface for the
-following implementation commits. They require JSON configuration input, plateau
-stopping, and best-checkpoint final evaluation before they can run.
+Each trial invokes `hw1_imitation.train`, the same entry point used for individual
+runs. W&B expands `${args}` into explicit values such as
+`--pad_action_chunk_with_last_action=False`. Architecture choices use quoted
+tuple strings, for example `"(256, 256, 256)"`. Unspecified fields inherit trainer
+defaults; the resolved configuration is logged to W&B.
+
+Sweeps registered with a previous wrapper or JSON command must be replaced:
+finish or stop their agents, then register the updated YAML files to obtain new
+sweep IDs. Editing local YAML does not update an existing registered command.
 
 From `hw1`, register each sweep once:
 
@@ -281,3 +287,20 @@ separate fixed random streams from checkpoint selection. This remains tuning
 data because the search observes the result, not a held-out test estimate.
 Weight decay is sampled log-uniformly from positive bounds; zero is excluded.
 Videos are disabled; retain the best checkpoint plus latest.
+
+Best-checkpoint final evaluation writes `final_eval.json` inside the run directory
+and logs `final/mean_reward`, `final/num_episodes`, `final/checkpoint_step`, and
+`final/selection_mean_reward` to W&B. The stopping reason is `plateau` or
+`max_epochs`. Periodic scores and checkpoint ranks remain unchanged by final
+evaluation. Final evaluation records no videos and uses dedicated final
+environment/policy stream identities, with the configured evaluation variations.
+
+Ordinary CLI training remains supported. Early stopping is disabled by default
+(`early_stopping_patience=None`), and best-checkpoint final evaluation is opt-in.
+It requires checkpoint saving and `checkpoint_top_k >= 1`. Without best-checkpoint
+mode, the existing last-step final-evaluation behavior remains unchanged when
+training reaches its epoch limit. For plateau-stopped runs, enable best-checkpoint
+mode to obtain the separate final evaluation and sweep objective.
+
+The learning-rate/weight-decay bounds, warm-up durations, and stopping threshold
+are initial choices to revisit after inspecting the first batch of trials.
