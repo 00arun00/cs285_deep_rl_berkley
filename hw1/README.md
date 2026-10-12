@@ -274,12 +274,12 @@ trials for that agent invocation. No sweep-wide run cap is configured.
 Changing a local YAML file does not change an already registered sweep; register
 a new sweep to use a different search space.
 
-The maximum training budget is 1,000 epochs. Periodic rollouts run every 2,000
-training steps. Plateau patience starts at the first rollout at or after 100
-MSE epochs or 300 flow epochs; ten subsequent evaluations without a reward gain
-of at least 0.005 trigger stopping. Small gains accumulate relative to the last
-meaningful improvement. Checkpoint selection independently retains the highest
-observed reward, with earlier steps winning ties.
+Each YAML file pins the training budget, rollout cadence, and plateau-stopping
+settings (warm-up in epochs, patience in rollouts, minimum reward gain); see the
+`parameters` section of each file for current values. Patience counts rollouts
+after the first eligible one following the warm-up, and small gains accumulate
+relative to the last meaningful improvement. Checkpoint selection independently
+retains the highest observed reward, with earlier steps winning ties.
 
 On plateau or the epoch limit, evaluate the best checkpoint over 1,000 episodes
 and report `final/mean_reward` on separate fixed random streams from checkpoint

@@ -215,7 +215,10 @@ def test_yaml_parameters_survive_wandb_argument_expansion(policy):
     assert config.hidden_dims == (128, 128, 128)
     assert config.final_eval_use_best_checkpoint
     assert config.eval_episodes == 100
-    assert config.early_stopping_min_epochs == (100 if policy == "mse" else 300)
+    assert config.validation_interval == 1000
+    assert config.early_stopping_patience == 7
+    assert config.early_stopping_min_epochs == 50
+    assert config.early_stopping_min_delta == (0.01 if policy == "mse" else 0.001)
 
 
 @pytest.mark.parametrize("policy", ["mse", "flow"])
