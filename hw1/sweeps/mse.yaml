@@ -41,6 +41,12 @@ parameters:
     min: 0.000001
     max: 0.01
 
+  dropout_p:
+    values: [0.0, 0.1, 0.2, 0.3]
+
+  state_noise_std:
+    values: [0.0, 0.01, 0.03, 0.1]
+
   num_epochs:
     value: 1000
 

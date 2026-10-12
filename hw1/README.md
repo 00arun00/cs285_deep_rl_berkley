@@ -65,6 +65,36 @@ this parser. For example, old `--no-log-wandb` commands become
 `--log-wandb False`, and old space-separated architecture values become a quoted
 tuple. Configuration and model constraints still apply after argument parsing.
 
+## Regularization
+
+Two training-time regularizers are available for both fresh and loaded policies:
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--weight-decay` | `0.0` | Decoupled weight decay inside AdamW. |
+| `--dropout-p` | `0.0` | Dropout probability applied to hidden activations during training only. `0` disables it and draws nothing. |
+| `--state-noise-std` | `0.0` | Standard deviation of Gaussian noise added to normalized training states. `0` disables it. |
+
+For example:
+
+```bash
+uv run python -m hw1_imitation.train \
+  --dropout-p 0.2 \
+  --state-noise-std 0.03 \
+  --weight-decay 0.0001 \
+  --log-wandb False
+```
+
+Dropout masks and state noise draw from their own caller-owned random streams
+(`TRAIN_LOSS` and `TRAIN_STATE_NOISE`), so runs replay exactly for a fixed
+`--seed` and per-stream `--*-variation` values. Validation loss and rollout
+evaluation never apply dropout or state noise. The startup summary and the W&B
+configuration both record the effective values.
+
+The sweep files search `dropout_p` over `[0.0, 0.1, 0.2, 0.3]` and
+`state_noise_std` over `[0.0, 0.01, 0.03, 0.1]` in addition to the existing
+`weight_decay` range.
+
 ## Weights & Biases (wandb) login
 
 These assignments use [Weights & Biases (WandB)](https://wandb.ai) for experiment tracking. WandB is a tool for logging and visualizing machine learning experiments. It is free for academic use. For W&B logging (enabled by default), log in using your API key. Local-only runs with `--log-wandb False` do not require W&B login.

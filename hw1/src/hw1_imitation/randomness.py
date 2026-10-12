@@ -46,7 +46,9 @@ class StreamId(IntEnum):
     FINAL_EVAL_ENV = 9
     FINAL_EVAL_POLICY = 10
 
-    # NEXT_ID = 11
+    TRAIN_STATE_NOISE = 11  # Perturb normalized training states
+
+    # NEXT_ID = 12
 
 
 @dataclass(frozen=True, slots=True)

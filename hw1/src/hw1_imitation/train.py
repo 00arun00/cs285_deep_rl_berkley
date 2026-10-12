@@ -65,6 +65,12 @@ class TrainConfig:
     lr: float = 3e-4
     weight_decay: float = 0.0
 
+    # Regularization — applies to both fresh and loaded policies.
+    # dropout_p drops hidden activations during training only.
+    # state_noise_std adds Gaussian noise to normalized training states.
+    dropout_p: float = 0.0
+    state_noise_std: float = 0.0
+
     # Validation and rollout evaluation, measured in training steps.
     validation_interval: int = 100
     eval_interval: int = 10_000
@@ -96,6 +102,7 @@ class TrainConfig:
     model_init_variation: int = 0
     train_loader_variation: int = 0
     train_loss_variation: int = 0
+    train_state_noise_variation: int = 0
     validation_loader_variation: int = 0
     validation_loss_variation: int = 0
     eval_env_variation: int = 0
@@ -132,6 +139,7 @@ class TrainConfig:
             (StreamId.MODEL_INIT, self.model_init_variation),
             (StreamId.TRAIN_LOADER, self.train_loader_variation),
             (StreamId.TRAIN_LOSS, self.train_loss_variation),
+            (StreamId.TRAIN_STATE_NOISE, self.train_state_noise_variation),
             (StreamId.VALIDATION_LOADER, self.validation_loader_variation),
             (StreamId.VALIDATION_LOSS, self.validation_loss_variation),
             (StreamId.EVAL_ENV, self.eval_env_variation),
@@ -139,13 +147,23 @@ class TrainConfig:
         ):
             streams.validate(stream, variation=variation)
 
-        if self.early_stopping_patience is not None and self.early_stopping_patience <= 0:
+        if (
+            self.early_stopping_patience is not None
+            and self.early_stopping_patience <= 0
+        ):
             raise ValueError("early_stopping_patience must be positive")
         if self.early_stopping_min_epochs < 0:
             raise ValueError("early_stopping_min_epochs must be nonnegative")
-        if (not math.isfinite(self.early_stopping_min_delta)
-                or self.early_stopping_min_delta < 0):
+        if (
+            not math.isfinite(self.early_stopping_min_delta)
+            or self.early_stopping_min_delta < 0
+        ):
             raise ValueError("early_stopping_min_delta must be finite and nonnegative")
+
+        if not 0.0 <= self.dropout_p < 1.0:
+            raise ValueError("dropout_p must be in [0, 1)")
+        if not math.isfinite(self.state_noise_std) or self.state_noise_std < 0.0:
+            raise ValueError("state_noise_std must be finite and nonnegative")
 
         if self.checkpoint_top_k < 0:
             raise ValueError("checkpoint_top_k must be nonnegative")
@@ -268,6 +286,16 @@ def build_training_summary(
         "Optimizer",
         f"AdamW · lr {config.lr:g} · weight decay {config.weight_decay:g}",
     )
+    regularization = (
+        f"dropout {config.dropout_p:g} · state noise σ {config.state_noise_std:g}"
+    )
+    table.add_row(
+        "Regularization",
+        Text(
+            regularization,
+            style="" if (config.dropout_p or config.state_noise_std) else "dim",
+        ),
+    )
     table.add_row(
         "Training budget",
         f"{config.num_epochs:,} epochs · {config.num_epochs * steps_per_epoch:,} optimizer steps",
@@ -278,7 +306,9 @@ def build_training_summary(
     table.add_row("Metric interval", f"Every {config.log_interval:,} steps + final")
     table.add_row(
         "Early stopping",
-        "Disabled" if config.early_stopping_patience is None else (
+        "Disabled"
+        if config.early_stopping_patience is None
+        else (
             f"{config.early_stopping_patience} stale rollouts; "
             f"warm-up {config.early_stopping_min_epochs} epochs; "
             f"minimum gain {config.early_stopping_min_delta:g}"
@@ -287,7 +317,8 @@ def build_training_summary(
     table.add_row(
         "Final policy",
         "Best checkpoint (separate evaluation streams)"
-        if config.final_eval_use_best_checkpoint else "Last training policy",
+        if config.final_eval_use_best_checkpoint
+        else "Last training policy",
     )
     table.add_row("Validation", f"Every {config.validation_interval:,} steps + final")
     table.add_row(
@@ -416,6 +447,26 @@ def build_loaders(
     return train_loader, validation_loader
 
 
+def apply_state_noise(
+    state: torch.Tensor,
+    *,
+    std: float,
+    generator: torch.Generator,
+) -> torch.Tensor:
+    """Return a noise-perturbed copy of normalized states.
+
+    Draws Gaussian noise from the caller-owned generator; the input tensor is
+    not modified. The generator must match the device of state.
+    """
+    noise = torch.randn(
+        size=state.shape,
+        device=state.device,
+        dtype=state.dtype,
+        generator=generator,
+    )
+    return state + std * noise
+
+
 def train_step(
     model: BasePolicy,
     optimizer: torch.optim.Optimizer,
@@ -423,6 +474,7 @@ def train_step(
     action_chunk: torch.Tensor,
     *,
     generator: torch.Generator,
+    dropout_p: float = 0.0,
 ) -> torch.Tensor:
     """Run 1 step of training"""
     model.train()
@@ -432,6 +484,7 @@ def train_step(
         state=state,
         action_chunk=action_chunk,
         generator=generator,
+        dropout_p=dropout_p,
     )
 
     loss.backward()
@@ -496,6 +549,13 @@ def run_training(config: TrainConfig) -> None:
         device=device,
     )
 
+    # Create fresh for each training run; advances only when state_noise_std > 0.
+    state_noise_generator = streams.torch(
+        StreamId.TRAIN_STATE_NOISE,
+        variation=config.train_state_noise_variation,
+        device=device,
+    )
+
     train_loader, validation_loader = build_loaders(
         config=config,
         train_episodes=train_episodes_subset,
@@ -538,7 +598,8 @@ def run_training(config: TrainConfig) -> None:
             min_delta=config.early_stopping_min_delta,
             start_step=config.early_stopping_min_epochs * len(train_loader),
         )
-        if config.early_stopping_patience is not None else None
+        if config.early_stopping_patience is not None
+        else None
     )
     stop_requested = False
     stop_reason = "max_epochs"
@@ -618,12 +679,20 @@ def run_training(config: TrainConfig) -> None:
                 display_metrics["epoch"] = f"{epoch + 1}/{config.num_epochs}"
                 progress.set_postfix(display_metrics, refresh=False)
                 for state, action_chunk in train_loader:
+                    state = state.to(device)
+                    if config.state_noise_std > 0.0:
+                        state = apply_state_noise(
+                            state,
+                            std=config.state_noise_std,
+                            generator=state_noise_generator,
+                        )
                     loss = train_step(
                         model=model,
                         optimizer=optimizer,
-                        state=state.to(device),
+                        state=state,
                         action_chunk=action_chunk.to(device),
                         generator=train_loss_generator,
+                        dropout_p=config.dropout_p,
                     )
                     global_step += 1
 
@@ -703,7 +772,8 @@ def run_training(config: TrainConfig) -> None:
                             num_video_episodes=config.num_video_episodes,
                             num_eval_episodes=(
                                 config.final_eval_episodes
-                                if training_complete and not config.final_eval_use_best_checkpoint
+                                if training_complete
+                                and not config.final_eval_use_best_checkpoint
                                 else config.eval_episodes
                             ),
                             flow_num_steps=config.flow_num_steps,
@@ -743,7 +813,8 @@ def run_training(config: TrainConfig) -> None:
 
                         if stopper is not None and not training_complete:
                             stop_requested = stopper.update(
-                                step=global_step, reward=result.mean_reward,
+                                step=global_step,
+                                reward=result.mean_reward,
                             )
                             if stop_requested:
                                 stop_reason = "plateau"
@@ -808,7 +879,8 @@ def finalize_best_checkpoint(
     if not checkpoints:
         raise RuntimeError("No checkpoint available for final evaluation")
     best_step = min(
-        checkpoints, key=lambda step: (-checkpoints[step].score, step),
+        checkpoints,
+        key=lambda step: (-checkpoints[step].score, step),
     )
     record = checkpoints[best_step]
     model, normalizer, inference = load_policy(record.path, device=device)
