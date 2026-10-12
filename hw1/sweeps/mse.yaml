@@ -44,14 +44,14 @@ parameters:
   dropout_p:
     distribution: uniform
     min: 0.0
-    max: 0.4
+    max: 0.5
 
-  # Log scale spans the meaningful noise magnitudes; the 0.001 floor is
-  # negligible in normalized units, so the search can still effectively
-  # disable noise.
+  # Log scale spans the meaningful noise magnitudes. The Bayesian agent can
+  # effectively disable noise by parking near the 0.0001 floor, which is
+  # negligible in normalized units.
   state_noise_std:
     distribution: log_uniform_values
-    min: 0.001
+    min: 0.0001
     max: 0.1
 
   num_epochs:

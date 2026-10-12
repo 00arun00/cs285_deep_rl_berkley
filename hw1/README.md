@@ -92,11 +92,11 @@ training mode: validation loss and rollout evaluation run under `model.eval()`,
 which disables it even when a probability is configured. The startup summary
 and the W&B configuration both record the effective values.
 
-The sweep files search `dropout_p` with a uniform distribution over `[0.0, 0.4]`
-and `state_noise_std` log-uniformly over `[0.001, 0.1]` in addition to the
-existing `weight_decay` range. The log-uniform floor of `0.001` normalized
-units is negligible, so the search can still effectively disable noise; there
-is no need for an exact zero arm.
+The sweep files search `dropout_p` with a uniform distribution over `[0.0, 0.5]`
+and `state_noise_std` log-uniformly over `[0.0001, 0.1]` in addition to the
+existing `weight_decay` range. Both regularizers can be effectively disabled
+within their ranges: dropout reaches exact zero, and the Bayesian agent can
+park noise at the negligible `0.0001` floor.
 
 ## Weights & Biases (wandb) login
 
