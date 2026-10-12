@@ -20,7 +20,7 @@ class TestLoggingControls:
         defaults = train.parse_train_config([])
         for field in ("log_csv", "log_wandb", "save_checkpoints", "show_summary"):
             assert getattr(defaults, field)
-            parsed = train.parse_train_config(["--no-" + field.replace("_", "-")])
+            parsed = train.parse_train_config(["--" + field.replace("_", "-"), "False"])
             for other in ("log_csv", "log_wandb", "save_checkpoints", "show_summary"):
                 assert getattr(parsed, other) == (other != field)
 

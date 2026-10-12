@@ -28,9 +28,46 @@ uv run src/hw1_imitation/train.py --help
 
 This should work out of the box with the provided starter code.
 
+## Training command syntax
+
+Individual runs and W&B sweep trials use the same `hw1_imitation.train` entry
+point and explicit-value Tyro parser. From `hw1`, view all options and defaults:
+
+```bash
+uv run python -m hw1_imitation.train --help
+```
+
+For example:
+
+```bash
+uv run python -m hw1_imitation.train \
+  --policy-type flow \
+  --hidden-dims "(256, 256, 256)" \
+  --pad-action-chunk-with-last-action False \
+  --lr 0.0003 \
+  --log-wandb False
+```
+
+| Kind | Example | Notes |
+| --- | --- | --- |
+| Boolean | `--log-csv False` or `--log-csv=True` | Explicit `True`/`False`; bare flags, `--no-log-csv`, and `0`/`1` are not accepted. |
+| Tuple | `--hidden-dims "(256, 256, 256)"` | Quote one Python tuple literal; lists and separate numeric arguments are not accepted. A singleton is `"(256,)"`. |
+| Fixed-size tuple | `--video-size "(256, 256)"` | Exactly two integer dimensions. |
+| Number | `--lr 1e-4` or `--batch-size=128` | Integer fields require integers. |
+| Optional value | `--init-from None` | Use literal `None`, not `null`. |
+| Path/string | `--data-dir "data with spaces"` | Quote values containing spaces. |
+
+Omitted arguments retain their defaults. Hyphens and underscores are accepted in
+option names; ordinary scalar values accept both space-separated and equals
+forms. `--help` shows the generated accepted syntax, types, and defaults.
+The same conventions apply to training flags passed through Modal, which shares
+this parser. For example, old `--no-log-wandb` commands become
+`--log-wandb False`, and old space-separated architecture values become a quoted
+tuple. Configuration and model constraints still apply after argument parsing.
+
 ## Weights & Biases (wandb) login
 
-These assignments use [Weights & Biases (WandB)](https://wandb.ai) for experiment tracking. WandB is a tool for logging and visualizing machine learning experiments. It is free for academic use. For W&B logging (enabled by default), log in using your API key. Local-only runs with `--no-log-wandb` do not require W&B login.
+These assignments use [Weights & Biases (WandB)](https://wandb.ai) for experiment tracking. WandB is a tool for logging and visualizing machine learning experiments. It is free for academic use. For W&B logging (enabled by default), log in using your API key. Local-only runs with `--log-wandb False` do not require W&B login.
 
 ```bash
 uv run wandb login
@@ -81,13 +118,13 @@ CSV metrics, W&B reporting, and checkpoint saving are enabled by default and
 can be disabled independently:
 
 ```bash
-uv run src/hw1_imitation/train.py --no-log-wandb
-uv run src/hw1_imitation/train.py --no-log-csv --no-log-wandb --no-save-checkpoints
+uv run src/hw1_imitation/train.py --log-wandb False
+uv run src/hw1_imitation/train.py --log-csv False --log-wandb False --save-checkpoints False
 ```
 
-`--no-log-csv` prevents metric CSV creation and writes. `--no-log-wandb` skips
+`--log-csv False` prevents metric CSV creation and writes. `--log-wandb False` skips
 W&B initialization, metrics, video uploads, and checkpoint artifacts.
-`--no-save-checkpoints` skips both local checkpoints and their W&B artifacts.
+`--save-checkpoints False` skips both local checkpoints and their W&B artifacts.
 Progress, warnings, validation, and rollout evaluation remain enabled. Videos
 are still recorded unless `--num-video-episodes 0` is supplied. The run directory
 is still created even when all three outputs are disabled.
@@ -103,7 +140,7 @@ With W&B enabled, checkpoints are also uploaded as model artifacts, with `best`
 runs apply the same retention without W&B. Cleanup failures are logged and retried
 at the next save; pending cleanup is reported at the end of training. Retry state
 does not persist across runs. Offline W&B runs remain unsupported; use
-`--no-log-wandb` for local-only runs. W&B cache files and evaluation videos are
+`--log-wandb False` for local-only runs. W&B cache files and evaluation videos are
 not covered by checkpoint retention.
 
 The policy checkpoint format (version 1) contains:
