@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Sequence
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass
@@ -28,6 +29,7 @@ from hw1_imitation.data import (
     download_pusht,
     load_episodes_dataset,
 )
+from hw1_imitation.early_stopping import EarlyStopping
 from hw1_imitation.evaluation import (
     CheckpointRecord,
     compute_validation_loss,
@@ -67,6 +69,11 @@ class TrainConfig:
     eval_interval: int = 10_000
     eval_episodes: int = 100
     final_eval_episodes: int = 100
+
+    # None disables plateau stopping. Warm-up does not count toward patience.
+    early_stopping_patience: int | None = None
+    early_stopping_min_epochs: int = 100
+    early_stopping_min_delta: float = 0.005
 
     # Retain the best K rollout checkpoints, plus latest (0 = latest only).
     save_checkpoints: bool = True
@@ -129,6 +136,14 @@ class TrainConfig:
             (StreamId.EVAL_POLICY, self.eval_policy_variation),
         ):
             streams.validate(stream, variation=variation)
+
+        if self.early_stopping_patience is not None and self.early_stopping_patience <= 0:
+            raise ValueError("early_stopping_patience must be positive")
+        if self.early_stopping_min_epochs < 0:
+            raise ValueError("early_stopping_min_epochs must be nonnegative")
+        if (not math.isfinite(self.early_stopping_min_delta)
+                or self.early_stopping_min_delta < 0):
+            raise ValueError("early_stopping_min_delta must be finite and nonnegative")
 
         if self.checkpoint_top_k < 0:
             raise ValueError("checkpoint_top_k must be nonnegative")
@@ -251,6 +266,14 @@ def build_training_summary(
         "Batch size", f"{config.batch_size:,} · incomplete training batch dropped"
     )
     table.add_row("Metric interval", f"Every {config.log_interval:,} steps + final")
+    table.add_row(
+        "Early stopping",
+        "Disabled" if config.early_stopping_patience is None else (
+            f"{config.early_stopping_patience} stale rollouts; "
+            f"warm-up {config.early_stopping_min_epochs} epochs; "
+            f"minimum gain {config.early_stopping_min_delta:g}"
+        ),
+    )
     table.add_row("Validation", f"Every {config.validation_interval:,} steps + final")
     table.add_row(
         "Rollout evaluation",
@@ -494,6 +517,16 @@ def run_training(config: TrainConfig) -> None:
     log_dir.mkdir(parents=True, exist_ok=False)
 
     total_steps = config.num_epochs * len(train_loader)
+    stopper = (
+        EarlyStopping(
+            patience=config.early_stopping_patience,
+            min_delta=config.early_stopping_min_delta,
+            start_step=config.early_stopping_min_epochs * len(train_loader),
+        )
+        if config.early_stopping_patience is not None else None
+    )
+    stop_requested = False
+    stop_reason = "max_epochs"
     loss_sum = 0.0
     window_examples_count = 0
 
@@ -693,9 +726,33 @@ def run_training(config: TrainConfig) -> None:
                                 flow_num_steps=config.flow_num_steps,
                             )
 
+                        if stopper is not None and not training_complete:
+                            stop_requested = stopper.update(
+                                step=global_step, reward=result.mean_reward,
+                            )
+                            if stop_requested:
+                                stop_reason = "plateau"
                         progress.set_description_str("Train")
 
-            progress.set_description_str("Done")
+                    if stop_requested:
+                        break
+                if stop_requested:
+                    break
+
+            if window_examples_count:
+                logger.log_train(
+                    global_step=global_step,
+                    epoch=epoch,
+                    loss_window_mean=loss_sum / window_examples_count,
+                    window_examples_count=window_examples_count,
+                )
+            progress.set_description_str(
+                "Stopped (plateau)" if stop_requested else "Done"
+            )
+
+        logging.info("Training ended at step %s: %s", global_step, stop_reason)
+        if run is not None:
+            run.summary["stop_reason"] = stop_reason
 
         if pending_cleanup:
             logging.warning(
