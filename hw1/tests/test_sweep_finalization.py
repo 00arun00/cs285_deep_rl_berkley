@@ -216,3 +216,11 @@ def test_yaml_parameters_survive_wandb_argument_expansion(policy):
     assert config.final_eval_use_best_checkpoint
     assert config.eval_episodes == 100
     assert config.early_stopping_min_epochs == (100 if policy == "mse" else 300)
+
+
+@pytest.mark.parametrize("policy", ["mse", "flow"])
+def test_yaml_objective_is_best_periodic_eval_reward(policy):
+    """Sweeps rank runs by the metric's summary; the objective must be eval/mean_reward."""
+    path = Path(__file__).parents[1] / "sweeps" / f"{policy}.yaml"
+    sweep = yaml.safe_load(path.read_text())
+    assert sweep["metric"] == {"name": "eval/mean_reward", "goal": "maximize"}

@@ -282,9 +282,12 @@ meaningful improvement. Checkpoint selection independently retains the highest
 observed reward, with earlier steps winning ties.
 
 On plateau or the epoch limit, evaluate the best checkpoint over 1,000 episodes
-and report `final/mean_reward`, the Bayesian objective. Final evaluation uses
-separate fixed random streams from checkpoint selection. This remains tuning
-data because the search observes the result, not a held-out test estimate.
+and report `final/mean_reward` on separate fixed random streams from checkpoint
+selection. The Bayesian objective is instead the best periodic score,
+`eval/mean_reward`: its W&B summary is configured as the maximum over the run,
+so sweep tables rank runs by `best(eval/mean_reward)`. Hyperparameters are
+chosen from that summary; `final/mean_reward` is the held-out result and is
+never optimized.
 Weight decay is sampled log-uniformly from positive bounds; zero is excluded.
 Videos are disabled; retain the best checkpoint plus latest.
 

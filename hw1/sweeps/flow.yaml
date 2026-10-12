@@ -3,7 +3,7 @@ project: cs285-hw1-imitation-learning
 method: bayes
 
 metric:
-  name: final/mean_reward
+  name: eval/mean_reward
   goal: maximize
 
 command:

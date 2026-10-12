@@ -350,7 +350,9 @@ def evaluate_policy(
             )
 
             policy_generator = streams.torch(
-                StreamId.FINAL_EVAL_POLICY if final_evaluation else StreamId.EVAL_POLICY,
+                StreamId.FINAL_EVAL_POLICY
+                if final_evaluation
+                else StreamId.EVAL_POLICY,
                 variation=policy_variation,
                 index=episode_index,
                 device=device,

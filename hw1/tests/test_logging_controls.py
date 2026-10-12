@@ -1,7 +1,7 @@
 """Exercise output controls without network access or environment rollouts."""
 
 import csv
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -34,6 +34,15 @@ class TestLoggingControls:
             video_paths=(tmp_path / "missing.mp4",),
         )
         assert list(tmp_path.iterdir()) == []
+
+
+def test_eval_mean_reward_summary_is_configured_as_best(tmp_path):
+    """Sweeps optimize the run summary; the objective summary must be the max."""
+    run = MagicMock()
+    train.ExperimentLogger(tmp_path, run=run, log_csv=False)
+    run.define_metric.assert_any_call(
+        "eval/mean_reward", step_metric="global_step", summary="max"
+    )
 
 
 @pytest.mark.parametrize("log_csv", [False, True], ids=["log_csv=off", "log_csv=on"])

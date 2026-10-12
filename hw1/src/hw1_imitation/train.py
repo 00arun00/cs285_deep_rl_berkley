@@ -139,12 +139,17 @@ class TrainConfig:
         ):
             streams.validate(stream, variation=variation)
 
-        if self.early_stopping_patience is not None and self.early_stopping_patience <= 0:
+        if (
+            self.early_stopping_patience is not None
+            and self.early_stopping_patience <= 0
+        ):
             raise ValueError("early_stopping_patience must be positive")
         if self.early_stopping_min_epochs < 0:
             raise ValueError("early_stopping_min_epochs must be nonnegative")
-        if (not math.isfinite(self.early_stopping_min_delta)
-                or self.early_stopping_min_delta < 0):
+        if (
+            not math.isfinite(self.early_stopping_min_delta)
+            or self.early_stopping_min_delta < 0
+        ):
             raise ValueError("early_stopping_min_delta must be finite and nonnegative")
 
         if self.checkpoint_top_k < 0:
@@ -278,7 +283,9 @@ def build_training_summary(
     table.add_row("Metric interval", f"Every {config.log_interval:,} steps + final")
     table.add_row(
         "Early stopping",
-        "Disabled" if config.early_stopping_patience is None else (
+        "Disabled"
+        if config.early_stopping_patience is None
+        else (
             f"{config.early_stopping_patience} stale rollouts; "
             f"warm-up {config.early_stopping_min_epochs} epochs; "
             f"minimum gain {config.early_stopping_min_delta:g}"
@@ -287,7 +294,8 @@ def build_training_summary(
     table.add_row(
         "Final policy",
         "Best checkpoint (separate evaluation streams)"
-        if config.final_eval_use_best_checkpoint else "Last training policy",
+        if config.final_eval_use_best_checkpoint
+        else "Last training policy",
     )
     table.add_row("Validation", f"Every {config.validation_interval:,} steps + final")
     table.add_row(
@@ -538,7 +546,8 @@ def run_training(config: TrainConfig) -> None:
             min_delta=config.early_stopping_min_delta,
             start_step=config.early_stopping_min_epochs * len(train_loader),
         )
-        if config.early_stopping_patience is not None else None
+        if config.early_stopping_patience is not None
+        else None
     )
     stop_requested = False
     stop_reason = "max_epochs"
@@ -703,7 +712,8 @@ def run_training(config: TrainConfig) -> None:
                             num_video_episodes=config.num_video_episodes,
                             num_eval_episodes=(
                                 config.final_eval_episodes
-                                if training_complete and not config.final_eval_use_best_checkpoint
+                                if training_complete
+                                and not config.final_eval_use_best_checkpoint
                                 else config.eval_episodes
                             ),
                             flow_num_steps=config.flow_num_steps,
@@ -743,7 +753,8 @@ def run_training(config: TrainConfig) -> None:
 
                         if stopper is not None and not training_complete:
                             stop_requested = stopper.update(
-                                step=global_step, reward=result.mean_reward,
+                                step=global_step,
+                                reward=result.mean_reward,
                             )
                             if stop_requested:
                                 stop_reason = "plateau"
@@ -802,13 +813,16 @@ def finalize_best_checkpoint(
 ) -> None:
     """Evaluate the best retained policy once on separate final random streams.
 
-    Final scores inform hyperparameter search; they are not held-out test scores.
+    Final scores are held-out estimates. The sweep objective is the best
+    periodic eval/mean_reward; this evaluation never informs selection.
+
     Preserve periodic selection scores and checkpoint ordering unchanged.
     """
     if not checkpoints:
         raise RuntimeError("No checkpoint available for final evaluation")
     best_step = min(
-        checkpoints, key=lambda step: (-checkpoints[step].score, step),
+        checkpoints,
+        key=lambda step: (-checkpoints[step].score, step),
     )
     record = checkpoints[best_step]
     model, normalizer, inference = load_policy(record.path, device=device)
