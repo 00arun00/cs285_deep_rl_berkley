@@ -55,7 +55,6 @@ class TestEvaluationBudget:
             eval_episodes=5,
             final_eval_episodes=50,
             num_video_episodes=0,
-            save_checkpoints=False,
             log_wandb=False,
             log_csv=False,
             show_summary=False,

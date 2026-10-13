@@ -629,7 +629,6 @@ class TestRandomnessIntegration:
                 final_eval_episodes=2,
                 flow_num_steps=2,
                 num_video_episodes=0,
-                save_checkpoints=False,
                 log_wandb=False,
                 log_csv=False,
                 show_summary=False,

@@ -89,7 +89,6 @@ def test_training_logs_actual_loss_windows(
                 num_epochs=epochs,
                 batch_size=batch_size,
                 log_interval=interval,
-                save_checkpoints=False,
             )
         )
     records = [call.kwargs for call in logger.return_value.log_train.call_args_list]
@@ -107,7 +106,7 @@ def test_training_warns_about_pending_checkpoint_cleanup(run_training, caplog, p
         patch.object(train, "save_checkpoint_and_retain", return_value=pending),
         caplog.at_level(logging.WARNING),
     ):
-        run_training(config(num_epochs=1, batch_size=24, save_checkpoints=True))
+        run_training(config(num_epochs=1, batch_size=24))
     warnings = [
         r.getMessage().lower()
         for r in caplog.records

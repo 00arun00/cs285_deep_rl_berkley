@@ -37,14 +37,14 @@ class TestCheckpoint:
                 "--data-split-variation",
                 "7",
                 "--checkpoint-top-k",
-                "0",
+                "1",
             ]
         )
         assert parsed.init_from == Path("/tmp/policy.pt")
         assert parsed.num_epochs == 20
         assert parsed.flow_num_steps == 3
         assert parsed.data_split_variation == 7
-        assert parsed.checkpoint_top_k == 0
+        assert parsed.checkpoint_top_k == 1
 
     def test_cli_preserves_supplied_defaults_without_mutating_them(self):
         """Keeps command-line overrides from corrupting defaults reused by later
@@ -57,10 +57,11 @@ class TestCheckpoint:
         assert asdict(parsed) == {**before, "num_epochs": 20}
         assert asdict(defaults) == before
 
-    def test_config_rejects_negative_checkpoint_retention(self):
+    @pytest.mark.parametrize("top_k", [0, -1])
+    def test_config_rejects_nonpositive_checkpoint_retention(self, top_k):
         """Rejects an invalid retention budget before training can create checkpoints."""
         with pytest.raises(ValueError, match="checkpoint_top_k"):
-            train.TrainConfig(checkpoint_top_k=-1)
+            train.TrainConfig(checkpoint_top_k=top_k)
 
     @pytest.mark.parametrize("value", (0, -1))
     def test_config_rejects_nonpositive_flow_steps(self, value):
