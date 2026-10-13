@@ -18,3 +18,5 @@ exp/
 # Modal logs/artifacts
 modal_volume/
 
+# spell check
+.harper-dictionary.txt

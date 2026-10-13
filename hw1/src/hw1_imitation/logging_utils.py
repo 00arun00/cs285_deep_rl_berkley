@@ -157,6 +157,13 @@ class ExperimentLogger:
             self.run.define_metric("train/*", step_metric="global_step")
             self.run.define_metric("validation/*", step_metric="global_step")
             self.run.define_metric("eval/*", step_metric="global_step")
+            self.run.define_metric("final/*", step_metric="global_step")
+
+            # Sweeps optimize the run summary of this metric; make that summary
+            # the best (max) value seen during the run, not the last value.
+            self.run.define_metric(
+                "eval/mean_reward", step_metric="global_step", summary="max"
+            )
 
     def _append_row(
         self,

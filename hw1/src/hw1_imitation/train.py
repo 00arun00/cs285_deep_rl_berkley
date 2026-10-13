@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import math
 from collections.abc import Sequence
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass
@@ -28,6 +30,7 @@ from hw1_imitation.data import (
     download_pusht,
     load_episodes_dataset,
 )
+from hw1_imitation.early_stopping import EarlyStopping
 from hw1_imitation.evaluation import (
     CheckpointRecord,
     compute_validation_loss,
@@ -68,8 +71,12 @@ class TrainConfig:
     eval_episodes: int = 100
     final_eval_episodes: int = 100
 
-    # Retain the best K rollout checkpoints, plus latest (0 = latest only).
-    save_checkpoints: bool = True
+    # None disables plateau stopping. Warm-up does not count toward patience.
+    early_stopping_patience: int | None = None
+    early_stopping_min_epochs: int = 100
+    early_stopping_min_delta: float = 0.005
+
+    # Retain the best K rollout checkpoints, plus latest (K >= 1).
     checkpoint_top_k: int = 3
 
     # Rollout inference and video recording.
@@ -130,8 +137,21 @@ class TrainConfig:
         ):
             streams.validate(stream, variation=variation)
 
-        if self.checkpoint_top_k < 0:
-            raise ValueError("checkpoint_top_k must be nonnegative")
+        if (
+            self.early_stopping_patience is not None
+            and self.early_stopping_patience <= 0
+        ):
+            raise ValueError("early_stopping_patience must be positive")
+        if self.early_stopping_min_epochs < 0:
+            raise ValueError("early_stopping_min_epochs must be nonnegative")
+        if (
+            not math.isfinite(self.early_stopping_min_delta)
+            or self.early_stopping_min_delta < 0
+        ):
+            raise ValueError("early_stopping_min_delta must be finite and nonnegative")
+
+        if self.checkpoint_top_k < 1:
+            raise ValueError("checkpoint_top_k must be positive")
 
         if self.num_video_episodes < 0:
             raise ValueError("num_video_episodes must be nonnegative")
@@ -251,6 +271,20 @@ def build_training_summary(
         "Batch size", f"{config.batch_size:,} · incomplete training batch dropped"
     )
     table.add_row("Metric interval", f"Every {config.log_interval:,} steps + final")
+    table.add_row(
+        "Early stopping",
+        "Disabled"
+        if config.early_stopping_patience is None
+        else (
+            f"{config.early_stopping_patience} stale rollouts; "
+            f"warm-up {config.early_stopping_min_epochs} epochs; "
+            f"minimum gain {config.early_stopping_min_delta:g}"
+        ),
+    )
+    table.add_row(
+        "Final policy",
+        "Best checkpoint (separate evaluation streams)",
+    )
     table.add_row("Validation", f"Every {config.validation_interval:,} steps + final")
     table.add_row(
         "Rollout evaluation",
@@ -273,19 +307,9 @@ def build_training_summary(
             style="green" if config.log_wandb else "dim",
         ),
     )
-    retention = (
-        f"Best {config.checkpoint_top_k} + latest"
-        if config.checkpoint_top_k
-        else "Latest only"
-    )
     table.add_row(
         "Checkpoints",
-        Text(
-            f"{retention} · after each evaluation"
-            if config.save_checkpoints
-            else "Disabled",
-            style="" if config.save_checkpoints else "dim",
-        ),
+        f"Best {config.checkpoint_top_k} + latest · after each selection evaluation",
     )
     width, height = config.video_size
     table.add_row(
@@ -312,6 +336,10 @@ def parse_train_config(
         args=args,
         default=defaults,
         description=description,
+        config=(
+            tyro.conf.FlagConversionOff,
+            tyro.conf.UsePythonSyntaxForLiteralCollections,
+        ),
     )
 
 
@@ -490,6 +518,18 @@ def run_training(config: TrainConfig) -> None:
     log_dir.mkdir(parents=True, exist_ok=False)
 
     total_steps = config.num_epochs * len(train_loader)
+    stopper = (
+        EarlyStopping(
+            patience=config.early_stopping_patience,
+            min_delta=config.early_stopping_min_delta,
+            start_step=config.early_stopping_min_epochs * len(train_loader),
+            objective="max",
+        )
+        if config.early_stopping_patience is not None
+        else None
+    )
+    stop_requested = False
+    stop_reason = "max_epochs"
     loss_sum = 0.0
     window_examples_count = 0
 
@@ -518,7 +558,7 @@ def run_training(config: TrainConfig) -> None:
         if run is not None and run.offline:
             raise ValueError(
                 "Offline W&B is not supported by this training driver. "
-                "Use --no-log-wandb for local-only runs."
+                "Use --log-wandb False for local-only runs."
             )
 
         logger = ExperimentLogger(log_dir, run=run, log_csv=config.log_csv)
@@ -649,11 +689,7 @@ def run_training(config: TrainConfig) -> None:
                             chunk_size=model.chunk_size,
                             video_size=config.video_size,
                             num_video_episodes=config.num_video_episodes,
-                            num_eval_episodes=(
-                                config.final_eval_episodes
-                                if training_complete
-                                else config.eval_episodes
-                            ),
+                            num_eval_episodes=config.eval_episodes,
                             flow_num_steps=config.flow_num_steps,
                             streams=streams,
                             env_variation=config.eval_env_variation,
@@ -674,24 +710,59 @@ def run_training(config: TrainConfig) -> None:
                             f"{result.mean_reward:.3f}@{global_step}"
                         )
                         progress.set_postfix(display_metrics, refresh=False)
-                        if config.save_checkpoints:
-                            progress.set_description_str("Saving")
+                        progress.set_description_str("Saving")
 
-                            pending_cleanup = save_checkpoint_and_retain(
-                                model=model,
+                        pending_cleanup = save_checkpoint_and_retain(
+                            model=model,
+                            step=global_step,
+                            checkpoint_dir=log_dir / "checkpoints",
+                            run=run,
+                            mean_reward=result.mean_reward,
+                            top_k=config.checkpoint_top_k,
+                            checkpoints=checkpoints,
+                            normalizer=normalizer,
+                            flow_num_steps=config.flow_num_steps,
+                        )
+
+                        if stopper is not None and not training_complete:
+                            stop_requested = stopper.update(
                                 step=global_step,
-                                checkpoint_dir=log_dir / "checkpoints",
-                                run=run,
-                                mean_reward=result.mean_reward,
-                                top_k=config.checkpoint_top_k,
-                                checkpoints=checkpoints,
-                                normalizer=normalizer,
-                                flow_num_steps=config.flow_num_steps,
+                                value=result.mean_reward,
                             )
-
+                            if stop_requested:
+                                stop_reason = "plateau"
                         progress.set_description_str("Train")
 
-            progress.set_description_str("Done")
+                    if stop_requested:
+                        break
+                if stop_requested:
+                    break
+
+            if window_examples_count:
+                logger.log_train(
+                    global_step=global_step,
+                    epoch=epoch,
+                    loss_window_mean=loss_sum / window_examples_count,
+                    window_examples_count=window_examples_count,
+                )
+            progress.set_description_str(
+                "Stopped (plateau)" if stop_requested else "Done"
+            )
+
+        logging.info("Training ended at step %s: %s", global_step, stop_reason)
+        if run is not None:
+            run.summary["stop_reason"] = stop_reason
+
+        finalize_best_checkpoint(
+            config=config,
+            checkpoints=checkpoints,
+            streams=streams,
+            device=device,
+            global_step=global_step,
+            stop_reason=stop_reason,
+            log_dir=log_dir,
+            run=run,
+        )
 
         if pending_cleanup:
             logging.warning(
@@ -699,6 +770,65 @@ def run_training(config: TrainConfig) -> None:
                 "Extra local files or W&B artifacts may remain.",
                 sorted(pending_cleanup),
             )
+
+
+def finalize_best_checkpoint(
+    *,
+    config: TrainConfig,
+    checkpoints: dict[int, CheckpointRecord],
+    streams: RandomStreamFactory,
+    device: torch.device,
+    global_step: int,
+    stop_reason: str,
+    log_dir: Path,
+    run: wandb.Run | None,
+) -> None:
+    """Evaluate the best retained policy once on separate final random streams.
+
+    Final scores are held-out estimates. The sweep objective is the best
+    periodic eval/mean_reward; this evaluation never informs selection.
+
+    Preserve periodic selection scores and checkpoint ordering unchanged.
+    """
+    if not checkpoints:
+        raise RuntimeError("No checkpoint available for final evaluation")
+    best_step = min(
+        checkpoints,
+        key=lambda step: (-checkpoints[step].score, step),
+    )
+    record = checkpoints[best_step]
+    model, normalizer, inference = load_policy(record.path, device=device)
+    result = evaluate_policy(
+        model=model,
+        normalizer=normalizer,
+        device=device,
+        chunk_size=model.chunk_size,
+        video_size=config.video_size,
+        num_video_episodes=0,
+        num_eval_episodes=config.final_eval_episodes,
+        flow_num_steps=inference["flow_num_steps"],
+        streams=streams,
+        env_variation=config.eval_env_variation,
+        policy_variation=config.eval_policy_variation,
+        final_evaluation=True,
+        video_dir=None,
+        show_progress=True,
+        progress_position=0,
+    )
+    metrics = {
+        "global_step": global_step,
+        "final/mean_reward": result.mean_reward,
+        "final/num_episodes": result.num_episodes,
+        "final/checkpoint_step": best_step,
+        "final/selection_mean_reward": record.score,
+    }
+    (log_dir / "final_eval.json").write_text(
+        json.dumps({**metrics, "stop_reason": stop_reason}, indent=2, allow_nan=False),
+        encoding="utf-8",
+    )
+    if run is not None:
+        run.log(metrics)
+        run.summary["stop_reason"] = stop_reason
 
 
 def main() -> None:

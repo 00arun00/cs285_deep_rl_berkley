@@ -112,24 +112,23 @@ class TestTrainingSummary:
             config=TrainConfig(
                 log_csv=False,
                 log_wandb=False,
-                save_checkpoints=False,
                 num_video_episodes=0,
             )
         )
         rendered = self.render(summary)
-        for label in ("CSV logging", "W&B", "Checkpoints", "Videos"):
+        for label in ("CSV logging", "W&B", "Videos"):
             assert summary_row_value(rendered, label) == "Disabled"
         assert "cs285-hw1" not in rendered
-        assert "Best 3" not in rendered
+        assert "Best 3 + latest" in summary_row_value(rendered, "Checkpoints")
         enabled = dict(
             summary,
             config=TrainConfig(
-                checkpoint_top_k=0,
+                checkpoint_top_k=1,
                 num_video_episodes=150,
             ),
         )
         rendered = self.render(enabled)
-        assert "Latest only" in summary_row_value(rendered, "Checkpoints")
+        assert "Best 1 + latest" in summary_row_value(rendered, "Checkpoints")
         assert "150 episodes" in summary_row_value(rendered, "Videos")
 
     def test_narrow_terminal_wraps_without_losing_values(self):

@@ -105,7 +105,7 @@ def save_checkpoint_and_retain(
     """Save an evaluated policy and retain the best K plus latest.
 
     Call once per evaluation with increasing steps and a fixed top_k.
-    Higher rewards win; ties favor earlier steps. Zero keeps only latest.
+    Higher rewards win; ties favor earlier steps. top_k must be positive.
     A supplied W&B run must be online; omit it for local-only saving.
 
     When uploading, completion is confirmed before pruning. Cleanup failures are
@@ -114,8 +114,8 @@ def save_checkpoint_and_retain(
     """
     if run is not None and run.offline:
         raise ValueError("Remote checkpoint retention requires online W&B.")
-    if top_k < 0:
-        raise ValueError("top_k must be nonnegative")
+    if top_k < 1:
+        raise ValueError("top_k must be positive")
     if not math.isfinite(mean_reward):
         raise ValueError("Checkpoint mean_reward must be finite")
 
@@ -150,7 +150,7 @@ def save_checkpoint_and_retain(
 
         # Logging moves these aliases; it does not remove older versions.
         aliases = ["latest"]
-        if top_k > 0 and ranked_steps[0] == step:
+        if ranked_steps[0] == step:
             aliases.append("best")
         uploaded = run.log_artifact(artifact, aliases=aliases)
         uploaded.wait()
@@ -241,6 +241,7 @@ def evaluate_policy(
     streams: RandomStreamFactory,
     env_variation: int = 0,
     policy_variation: int = 0,
+    final_evaluation: bool = False,
     video_dir: Path | None = None,
     num_eval_episodes: int = NUM_EVAL_EPISODES,
     show_progress: bool = False,
@@ -276,6 +277,7 @@ def evaluate_policy(
         streams: Stateless factory supplying indexed episode randomness.
         env_variation: Realization of evaluation environment randomness.
         policy_variation: Realization of evaluation policy randomness.
+        final_evaluation: Use separate final-evaluation random stream identities.
         video_dir: Existing directory required when recording videos.
         num_eval_episodes: Positive number of rollout episodes.
         show_progress: Show a temporary bar on an interactive terminal.
@@ -342,13 +344,15 @@ def evaluate_policy(
         for episode_index in range(num_eval_episodes):
             # Give each episode separately indexed environment and policy streams.
             env_seed = streams.seed(
-                StreamId.EVAL_ENV,
+                StreamId.FINAL_EVAL_ENV if final_evaluation else StreamId.EVAL_ENV,
                 variation=env_variation,
                 index=episode_index,
             )
 
             policy_generator = streams.torch(
-                StreamId.EVAL_POLICY,
+                StreamId.FINAL_EVAL_POLICY
+                if final_evaluation
+                else StreamId.EVAL_POLICY,
                 variation=policy_variation,
                 index=episode_index,
                 device=device,

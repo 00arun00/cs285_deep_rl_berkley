@@ -13,14 +13,14 @@ class TestEvaluationBudget:
     @pytest.mark.parametrize(
         "batch_size,interval,expected",
         [
-            (4, 2, [(2, 5), (4, 5), (6, 50)]),
-            (4, 4, [(4, 5), (6, 50)]),
-            (4, 10, [(6, 50)]),
-            (24, 1, [(1, 50)]),
+            (4, 2, [(2, 5, False), (4, 5, False), (6, 5, False), (6, 50, True)]),
+            (4, 4, [(4, 5, False), (6, 5, False), (6, 50, True)]),
+            (4, 10, [(6, 5, False), (6, 50, True)]),
+            (24, 1, [(1, 5, False), (1, 50, True)]),
         ],
         ids=["aligned-final", "unaligned-final", "short-run", "one-step"],
     )
-    def test_final_step_uses_final_budget_exactly_once(
+    def test_selection_and_final_evaluation_use_separate_budgets(
         self, tmp_path, batch_size, interval, expected
     ):
         """Training uses the final rollout budget once at completion.
@@ -55,7 +55,6 @@ class TestEvaluationBudget:
             eval_episodes=5,
             final_eval_episodes=50,
             num_video_episodes=0,
-            save_checkpoints=False,
             log_wandb=False,
             log_csv=False,
             show_summary=False,
@@ -71,7 +70,13 @@ class TestEvaluationBudget:
             return result
 
         def evaluate(**kwargs):
-            evaluations.append((steps, kwargs["num_eval_episodes"]))
+            evaluations.append(
+                (
+                    steps,
+                    kwargs["num_eval_episodes"],
+                    kwargs.get("final_evaluation", False),
+                )
+            )
             return EvaluationResults(0.5, kwargs["num_eval_episodes"], ())
 
         root = tmp_path

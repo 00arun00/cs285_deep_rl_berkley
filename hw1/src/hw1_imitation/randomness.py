@@ -43,7 +43,10 @@ class StreamId(IntEnum):
     EVAL_ENV = 7
     EVAL_POLICY = 8
 
-    # NEXT_ID = 9
+    FINAL_EVAL_ENV = 9
+    FINAL_EVAL_POLICY = 10
+
+    # NEXT_ID = 11
 
 
 @dataclass(frozen=True, slots=True)

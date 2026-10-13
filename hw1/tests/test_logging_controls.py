@@ -1,7 +1,8 @@
 """Exercise output controls without network access or environment rollouts."""
 
 import csv
-from unittest.mock import patch
+import json
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -18,10 +19,10 @@ class TestLoggingControls:
         """Catches output flags accidentally disabling another independently controlled
         output."""
         defaults = train.parse_train_config([])
-        for field in ("log_csv", "log_wandb", "save_checkpoints", "show_summary"):
+        for field in ("log_csv", "log_wandb", "show_summary"):
             assert getattr(defaults, field)
-            parsed = train.parse_train_config(["--no-" + field.replace("_", "-")])
-            for other in ("log_csv", "log_wandb", "save_checkpoints", "show_summary"):
+            parsed = train.parse_train_config(["--" + field.replace("_", "-"), "False"])
+            for other in ("log_csv", "log_wandb", "show_summary"):
                 assert getattr(parsed, other) == (other != field)
 
     def test_disabled_logger_skips_video_validation(self, tmp_path):
@@ -36,20 +37,24 @@ class TestLoggingControls:
         assert list(tmp_path.iterdir()) == []
 
 
+def test_eval_mean_reward_summary_is_configured_as_best(tmp_path):
+    """Sweeps optimize the run summary; the objective summary must be the max."""
+    run = MagicMock()
+    train.ExperimentLogger(tmp_path, run=run, log_csv=False)
+    run.define_metric.assert_any_call(
+        "eval/mean_reward", step_metric="global_step", summary="max"
+    )
+
+
 @pytest.mark.parametrize("log_csv", [False, True], ids=["log_csv=off", "log_csv=on"])
 @pytest.mark.parametrize(
     "log_wandb", [False, True], ids=["log_wandb=off", "log_wandb=on"]
 )
 @pytest.mark.parametrize(
-    "save_checkpoints",
-    [False, True],
-    ids=["save_checkpoints=off", "save_checkpoints=on"],
-)
-@pytest.mark.parametrize(
     "show_summary", [False, True], ids=["show_summary=off", "show_summary=on"]
 )
 def test_all_output_combinations(
-    log_csv, log_wandb, save_checkpoints, show_summary, tmp_path, capsys, monkeypatch
+    log_csv, log_wandb, show_summary, tmp_path, capsys, monkeypatch
 ):
     """Training output controls operate independently.
 
@@ -80,7 +85,6 @@ def test_all_output_combinations(
     config = train.TrainConfig(
         log_csv=log_csv,
         log_wandb=log_wandb,
-        save_checkpoints=save_checkpoints,
         show_summary=show_summary,
         hidden_dims=(4,),
         chunk_size=1,
@@ -153,7 +157,9 @@ def test_all_output_combinations(
     else:
         assert "Training samples" not in captured.err + captured.out
 
-    evaluate.assert_called_once()
+    assert [
+        c.kwargs.get("final_evaluation", False) for c in evaluate.call_args_list
+    ] == [False, True]
     train_metrics = {
         "epoch": 0,
         "loss_window_mean": observed["train_loss"],
@@ -170,16 +176,31 @@ def test_all_output_combinations(
         "validation": validation_metrics,
         "eval": eval_metrics,
     }
+    final_metrics = {
+        "global_step": 1,
+        "final/mean_reward": 0.5,
+        "final/num_episodes": 1,
+        "final/checkpoint_step": 1,
+        "final/selection_mean_reward": 0.5,
+    }
+    final_reports = list(root.rglob("final_eval.json"))
+    assert len(final_reports) == 1
+    report = json.loads(final_reports[0].read_text())
+    assert report == {
+        **final_metrics,
+        "stop_reason": "max_epochs",
+    }
     if log_wandb:
         initialize.assert_called_once()
         payloads = [call.args[0] for call in run.log.call_args_list]
-        assert payloads == [
+        for expected_payload in [
             {
                 "global_step": 1,
                 **{f"{namespace}/{key}": value for key, value in metrics.items()},
             }
             for namespace, metrics in expected.items()
-        ]
+        ] + [final_metrics]:
+            assert payloads.count(expected_payload) == 1
     else:
         initialize.assert_not_called()
         run.log.assert_not_called()
@@ -200,14 +221,11 @@ def test_all_output_combinations(
         assert rows == [expected_row]
 
     checkpoints = list(root.rglob("*.pt"))
-    assert len(checkpoints) == int(save_checkpoints)
-    if save_checkpoints:
-        assert checkpoints[0].parent.name == "checkpoints"
-        load_policy(checkpoints[0])
-    else:
-        assert list(root.rglob("checkpoints")) == []
+    assert len(checkpoints) == 1
+    assert checkpoints[0].parent.name == "checkpoints"
+    load_policy(checkpoints[0])
 
-    if log_wandb and save_checkpoints:
+    if log_wandb:
         artifact.assert_called_once()
         run.log_artifact.assert_called_once()
         run.log_artifact.return_value.wait.assert_called_once()

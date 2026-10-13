@@ -629,7 +629,6 @@ class TestRandomnessIntegration:
                 final_eval_episodes=2,
                 flow_num_steps=2,
                 num_video_episodes=0,
-                save_checkpoints=False,
                 log_wandb=False,
                 log_csv=False,
                 show_summary=False,
@@ -666,7 +665,20 @@ class TestRandomnessIntegration:
                 step % eval_interval == 0 or step == 12 for step in range(1, 13)
             )
             assert validate.call_count == expected_validation_calls
-            assert evaluate.call_count == expected_evaluation_calls
+            assert (
+                sum(
+                    not c.kwargs.get("final_evaluation", False)
+                    for c in evaluate.call_args_list
+                )
+                == expected_evaluation_calls
+            )
+            assert (
+                sum(
+                    c.kwargs.get("final_evaluation", False)
+                    for c in evaluate.call_args_list
+                )
+                == 1
+            )
             return losses, weights
 
         root = tmp_path
