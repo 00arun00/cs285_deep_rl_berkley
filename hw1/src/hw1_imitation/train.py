@@ -523,6 +523,7 @@ def run_training(config: TrainConfig) -> None:
             patience=config.early_stopping_patience,
             min_delta=config.early_stopping_min_delta,
             start_step=config.early_stopping_min_epochs * len(train_loader),
+            objective="max",
         )
         if config.early_stopping_patience is not None
         else None
@@ -726,7 +727,7 @@ def run_training(config: TrainConfig) -> None:
                         if stopper is not None and not training_complete:
                             stop_requested = stopper.update(
                                 step=global_step,
-                                reward=result.mean_reward,
+                                value=result.mean_reward,
                             )
                             if stop_requested:
                                 stop_reason = "plateau"

@@ -285,10 +285,12 @@ a new sweep to use a different search space.
 
 Each YAML file pins the training budget, rollout cadence, and plateau-stopping
 settings (warm-up in epochs, patience in rollouts, minimum reward gain); see the
-`parameters` section of each file for current values. Patience counts rollouts
-after the first eligible one following the warm-up, and small gains accumulate
-relative to the last meaningful improvement. Checkpoint selection independently
-retains the highest observed reward, with earlier steps winning ties.
+`parameters` section of each file for current values. The stopping reference is
+tracked from the first evaluation, including warm-up. Accumulated gains must
+strictly exceed `min_delta` to update it and reset patience. Stale evaluations
+count only when `step > start_step`; training stops after `patience` consecutive
+stale evaluations. Checkpoint selection independently retains the highest
+observed reward, including warm-up, with earlier steps winning ties.
 
 On plateau or the epoch limit, evaluate the best checkpoint over 1,000 episodes
 and report `final/mean_reward` on separate fixed random streams from checkpoint

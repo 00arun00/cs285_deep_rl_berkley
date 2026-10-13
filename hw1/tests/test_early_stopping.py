@@ -12,35 +12,56 @@ from tests import test_training_reporting
 run_training = test_training_reporting.run_training
 
 
-def test_warmup_baseline_and_exact_patience():
-    stopper = EarlyStopping(patience=2, min_delta=0.1, start_step=10)
-    assert not stopper.update(step=9, reward=1.0)
-    assert not stopper.update(step=10, reward=0.5)
-    assert not stopper.update(step=11, reward=0.5)
-    assert stopper.update(step=12, reward=0.5)
+@pytest.mark.parametrize("objective, direction", [("max", 1), ("min", -1)])
+def test_warmup_reference_persists_and_patience_counts_evaluations(objective, direction):
+    stopper = EarlyStopping(
+        patience=2, min_delta=0.125, start_step=10, objective=objective
+    )
+    assert not stopper.update(step=1, value=direction * 0.5)
+    assert not stopper.update(step=5, value=direction * 1.0)
+    assert not stopper.update(step=9, value=direction * 0.5)
+    assert not stopper.update(step=10, value=direction * 0.5)
+    # These improve on each other, but not on the reference from warm-up.
+    # Spaced-out steps ensure patience counts evaluations, not optimizer steps.
+    assert not stopper.update(step=20, value=direction * 0.625)
+    assert stopper.update(step=30, value=direction * 0.75)
 
 
-def test_small_gains_accumulate_and_reset_patience():
-    stopper = EarlyStopping(patience=3, min_delta=0.125, start_step=0)
-    assert not stopper.update(step=1, reward=0.5)
-    assert not stopper.update(step=2, reward=0.5625)
-    assert not stopper.update(step=3, reward=0.625)
-    assert not stopper.update(step=4, reward=0.625)
-    assert not stopper.update(step=5, reward=0.625)
-    assert stopper.update(step=6, reward=0.625)
+@pytest.mark.parametrize("objective, direction", [("max", 1), ("min", -1)])
+def test_small_gains_accumulate_and_reset_patience(objective, direction):
+    stopper = EarlyStopping(
+        patience=3, min_delta=0.125, start_step=0, objective=objective
+    )
+    # Binary fractions make the exact min_delta boundary unambiguous.
+    assert not stopper.update(step=1, value=direction * 0.5)
+    assert not stopper.update(step=2, value=direction * 0.5625)
+    assert not stopper.update(step=3, value=direction * 0.625)
+    assert not stopper.update(step=4, value=direction * 0.6875)
+    assert not stopper.update(step=5, value=direction * 0.6875)
+    assert not stopper.update(step=6, value=direction * 0.6875)
+    assert stopper.update(step=7, value=direction * 0.6875)
 
 
-def test_zero_delta_still_requires_strict_improvement():
-    stopper = EarlyStopping(patience=1, min_delta=0, start_step=0)
-    assert not stopper.update(step=1, reward=0.5)
-    assert not stopper.update(step=2, reward=0.6)
-    assert stopper.update(step=3, reward=0.6)
+@pytest.mark.parametrize("objective, direction", [("max", 1), ("min", -1)])
+def test_zero_delta_still_requires_strict_improvement(objective, direction):
+    stopper = EarlyStopping(
+        patience=1, min_delta=0, start_step=0, objective=objective
+    )
+    assert not stopper.update(step=1, value=direction * 0.5)
+    assert not stopper.update(step=2, value=direction * 0.6)
+    assert stopper.update(step=3, value=direction * 0.6)
 
 
-@pytest.mark.parametrize("reward", [float("nan"), float("inf"), -float("inf")])
-def test_nonfinite_reward_rejected_even_during_warmup(reward):
-    with pytest.raises(ValueError, match="finite"):
-        EarlyStopping(1, 0, 100).update(step=1, reward=reward)
+@pytest.mark.parametrize("objective", ["min", "max"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
+def test_nonfinite_value_rejected_even_during_warmup(objective, value):
+    with pytest.raises(ValueError):
+        EarlyStopping(1, 0, 100, objective=objective).update(step=1, value=value)
+
+
+def test_invalid_objective_rejected():
+    with pytest.raises(ValueError):
+        EarlyStopping(patience=1, min_delta=0, start_step=0, objective="invalid")
 
 
 @pytest.mark.parametrize(
