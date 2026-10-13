@@ -65,9 +65,6 @@ parameters:
   early_stopping_min_delta:
     value: 0.001
 
-  final_eval_use_best_checkpoint:
-    value: true
-
   checkpoint_top_k:
     value: 1
 

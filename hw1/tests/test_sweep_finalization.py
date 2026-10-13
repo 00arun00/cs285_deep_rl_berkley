@@ -1,4 +1,4 @@
-"""Sweep trials rank retained policies using one separate final evaluation."""
+"""Every training run evaluates its best retained policy on separate final streams."""
 
 import json
 from pathlib import Path
@@ -43,7 +43,6 @@ def test_final_evaluation_restores_best_and_reports_once(
         log_wandb=online,
         log_csv=False,
         show_summary=False,
-        final_eval_use_best_checkpoint=True,
         early_stopping_patience=2 if early_stop else None,
         early_stopping_min_epochs=1,
         early_stopping_min_delta=0.125,
@@ -133,18 +132,6 @@ def test_final_evaluation_restores_best_and_reports_once(
         init.assert_not_called()
 
 
-@pytest.mark.parametrize(
-    "settings",
-    [
-        {"save_checkpoints": False},
-        {"checkpoint_top_k": 0},
-    ],
-)
-def test_best_final_evaluation_requires_retained_checkpoints(settings):
-    with pytest.raises(ValueError, match="Best-checkpoint"):
-        train.TrainConfig(final_eval_use_best_checkpoint=True, **settings)
-
-
 def test_final_streams_are_separate_and_replayable():
     policy = make_policy()
     streams = RandomStreamFactory(42)
@@ -213,7 +200,6 @@ def test_yaml_parameters_survive_wandb_argument_expansion(policy):
     config = run.call_args.args[0]
     assert config.policy_type == policy
     assert config.hidden_dims == (128, 128, 128)
-    assert config.final_eval_use_best_checkpoint
     assert config.eval_episodes == 100
     assert config.validation_interval == 1000
     assert config.early_stopping_patience == 7

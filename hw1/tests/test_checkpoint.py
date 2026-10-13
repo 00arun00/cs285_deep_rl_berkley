@@ -37,14 +37,14 @@ class TestCheckpoint:
                 "--data-split-variation",
                 "7",
                 "--checkpoint-top-k",
-                "0",
+                "1",
             ]
         )
         assert parsed.init_from == Path("/tmp/policy.pt")
         assert parsed.num_epochs == 20
         assert parsed.flow_num_steps == 3
         assert parsed.data_split_variation == 7
-        assert parsed.checkpoint_top_k == 0
+        assert parsed.checkpoint_top_k == 1
 
     def test_cli_preserves_supplied_defaults_without_mutating_them(self):
         """Keeps command-line overrides from corrupting defaults reused by later
@@ -57,10 +57,11 @@ class TestCheckpoint:
         assert asdict(parsed) == {**before, "num_epochs": 20}
         assert asdict(defaults) == before
 
-    def test_config_rejects_negative_checkpoint_retention(self):
+    @pytest.mark.parametrize("top_k", [0, -1])
+    def test_config_rejects_nonpositive_checkpoint_retention(self, top_k):
         """Rejects an invalid retention budget before training can create checkpoints."""
         with pytest.raises(ValueError, match="checkpoint_top_k"):
-            train.TrainConfig(checkpoint_top_k=-1)
+            train.TrainConfig(checkpoint_top_k=top_k)
 
     @pytest.mark.parametrize("value", (0, -1))
     def test_config_rejects_nonpositive_flow_steps(self, value):
@@ -326,6 +327,8 @@ def test_loaded_policy_starts_a_fresh_training_run(policy_type, tmp_path):
             steps += 1
             return loss
 
+        real_save = train.save_checkpoint_and_retain
+
         def save(
             model,
             step,
@@ -340,8 +343,19 @@ def test_loaded_policy_starts_a_fresh_training_run(policy_type, tmp_path):
         ):
             assert mean_reward == 0.5
             assert top_k == config.checkpoint_top_k
-            save_policy(target, model, normalizer, flow_num_steps=flow_num_steps)
-            return set()
+            pending = real_save(
+                model=model,
+                step=step,
+                checkpoint_dir=checkpoint_dir,
+                run=None,
+                normalizer=normalizer,
+                flow_num_steps=flow_num_steps,
+                mean_reward=mean_reward,
+                top_k=top_k,
+                checkpoints=checkpoints,
+            )
+            target.write_bytes(checkpoints[step].path.read_bytes())
+            return pending
 
         with (
             patch.object(train, "LOGDIR_PREFIX", str(root / name)),
@@ -369,7 +383,9 @@ def test_loaded_policy_starts_a_fresh_training_run(policy_type, tmp_path):
         # Four training episodes, each containing six padded samples.
         expected_steps = config.num_epochs * (24 // config.batch_size)
         assert steps == expected_steps
-        assert evaluate.call_count == 1
+        assert [
+            c.kwargs.get("final_evaluation", False) for c in evaluate.call_args_list
+        ] == [False, True]
         assert save_artifact.call_count == 1
         assert save_artifact.call_args.kwargs["step"] == expected_steps
         restored, normalizer, inference = load_policy(target)

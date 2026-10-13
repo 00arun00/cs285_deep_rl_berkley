@@ -107,36 +107,45 @@ Use fewer episodes for periodic rollouts while keeping a full final evaluation:
 uv run src/hw1_imitation/train.py --eval-episodes 5 --final-eval-episodes 100
 ```
 
-Both counts must be positive and default to 100. If a periodic evaluation lands
-on the final training step, only the final evaluation runs, using
-`--final-eval-episodes`. Evaluation intervals, video recording, and checkpoint
-schedules are unchanged. Video count is capped by the rollout episode count.
+Both counts must be positive and default to 100. Selection rollouts run every
+`--eval-interval` steps and at the final training step, always using
+`--eval-episodes`. After reaching the epoch limit or stopping on a plateau, the
+best saved checkpoint is evaluated once using `--final-eval-episodes` on separate
+fixed final-evaluation random streams. Higher selection rewards win; ties favor
+earlier steps. Final scores never affect checkpoint selection.
+
+Selection rollouts can record videos, capped by their episode count. The separate
+final evaluation records no videos. Its results are always written to
+`final_eval.json` in the run directory and also reported to W&B when enabled.
 
 ## Reusing policy checkpoints
 
-CSV metrics, W&B reporting, and checkpoint saving are enabled by default and
-can be disabled independently:
+Local checkpoint saving is mandatory. CSV metrics and W&B reporting can be
+disabled independently:
 
 ```bash
 uv run src/hw1_imitation/train.py --log-wandb False
-uv run src/hw1_imitation/train.py --log-csv False --log-wandb False --save-checkpoints False
+uv run src/hw1_imitation/train.py --log-csv False --log-wandb False
 ```
 
 `--log-csv False` prevents metric CSV creation and writes. `--log-wandb False` skips
-W&B initialization, metrics, video uploads, and checkpoint artifacts.
-`--save-checkpoints False` skips both local checkpoints and their W&B artifacts.
-Progress, warnings, validation, and rollout evaluation remain enabled. Videos
-are still recorded unless `--num-video-episodes 0` is supplied. The run directory
-is still created even when all three outputs are disabled.
+W&B initialization, metrics, video uploads, and checkpoint artifacts. Local
+checkpoints and `final_eval.json` are still written. Videos are still recorded
+unless `--num-video-episodes 0` is supplied.
 
-When checkpoint saving is enabled, each rollout evaluation (including the final
-training step) saves `exp/<experiment_name>/checkpoints/policy_step_<step>.pt`.
-`--checkpoint-top-k` (default: 3) retains the best K by rollout mean reward plus
-latest. Ties favor earlier checkpoints; zero keeps only latest. This setting has
-no effect when checkpoint saving is disabled.
+Each selection rollout (including the final training step) saves
+`exp/<experiment_name>/checkpoints/policy_step_<step>.pt`.
+`--checkpoint-top-k` (default: 3) must be at least 1 and retains the best K by
+rollout mean reward plus latest. Ties favor earlier checkpoints. The separate
+final evaluation loads the best checkpoint and does not save or rank another one.
+
+The former `--save-checkpoints` and `--final-eval-use-best-checkpoint` options have
+been removed. Remove them from existing commands; replace `--checkpoint-top-k 0`
+with a positive value. Existing registered sweeps passing removed options must be
+re-registered with the updated YAML files before launching new trials.
 
 With W&B enabled, checkpoints are also uploaded as model artifacts, with `best`
-(when K > 0) and `latest` aliases. Pruning waits for upload completion. Local-only
+and `latest` aliases. Pruning waits for upload completion. Local-only
 runs apply the same retention without W&B. Cleanup failures are logged and retried
 at the next save; pending cleanup is reported at the end of training. Retry state
 does not persist across runs. Offline W&B runs remain unsupported; use
@@ -298,12 +307,10 @@ and logs `final/mean_reward`, `final/num_episodes`, `final/checkpoint_step`, and
 evaluation. Final evaluation records no videos and uses dedicated final
 environment/policy stream identities, with the configured evaluation variations.
 
-Ordinary CLI training remains supported. Early stopping is disabled by default
-(`early_stopping_patience=None`), and best-checkpoint final evaluation is opt-in.
-It requires checkpoint saving and `checkpoint_top_k >= 1`. Without best-checkpoint
-mode, the existing last-step final-evaluation behavior remains unchanged when
-training reaches its epoch limit. For plateau-stopped runs, enable best-checkpoint
-mode to obtain the separate final evaluation and sweep objective.
+Ordinary CLI training uses the same best-checkpoint final evaluation as sweeps.
+Early stopping remains disabled by default (`early_stopping_patience=None`).
+Every successful run retains at least its best checkpoint, even with W&B and CSV
+logging disabled.
 
 The learning-rate/weight-decay bounds, warm-up durations, and stopping threshold
 are initial choices to revisit after inspecting the first batch of trials.
