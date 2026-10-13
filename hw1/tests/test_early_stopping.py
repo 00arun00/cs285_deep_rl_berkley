@@ -91,7 +91,6 @@ def test_stopping_exits_both_loops_and_flushes_loss(run_training):
         log_wandb=False,
         log_csv=False,
         show_summary=False,
-        save_checkpoints=False,
         early_stopping_patience=2,
         early_stopping_min_epochs=1,
     )

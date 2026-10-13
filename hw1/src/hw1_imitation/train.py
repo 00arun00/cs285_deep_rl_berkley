@@ -75,8 +75,7 @@ class TrainConfig:
     early_stopping_min_epochs: int = 100
     early_stopping_min_delta: float = 0.005
 
-    # Retain the best K rollout checkpoints, plus latest (0 = latest only).
-    save_checkpoints: bool = True
+    # Retain the best K rollout checkpoints + latest (K > 0).
     checkpoint_top_k: int = 3
 
     # Rollout inference and video recording.
@@ -137,16 +136,21 @@ class TrainConfig:
         ):
             streams.validate(stream, variation=variation)
 
-        if self.early_stopping_patience is not None and self.early_stopping_patience <= 0:
+        if (
+            self.early_stopping_patience is not None
+            and self.early_stopping_patience <= 0
+        ):
             raise ValueError("early_stopping_patience must be positive")
         if self.early_stopping_min_epochs < 0:
             raise ValueError("early_stopping_min_epochs must be nonnegative")
-        if (not math.isfinite(self.early_stopping_min_delta)
-                or self.early_stopping_min_delta < 0):
+        if (
+            not math.isfinite(self.early_stopping_min_delta)
+            or self.early_stopping_min_delta < 0
+        ):
             raise ValueError("early_stopping_min_delta must be finite and nonnegative")
 
-        if self.checkpoint_top_k < 0:
-            raise ValueError("checkpoint_top_k must be nonnegative")
+        if self.checkpoint_top_k < 1:
+            raise ValueError("checkpoint_top_k must be positive")
 
         if self.num_video_episodes < 0:
             raise ValueError("num_video_episodes must be nonnegative")
@@ -268,7 +272,9 @@ def build_training_summary(
     table.add_row("Metric interval", f"Every {config.log_interval:,} steps + final")
     table.add_row(
         "Early stopping",
-        "Disabled" if config.early_stopping_patience is None else (
+        "Disabled"
+        if config.early_stopping_patience is None
+        else (
             f"{config.early_stopping_patience} stale rollouts; "
             f"warm-up {config.early_stopping_min_epochs} epochs; "
             f"minimum gain {config.early_stopping_min_delta:g}"
@@ -296,19 +302,9 @@ def build_training_summary(
             style="green" if config.log_wandb else "dim",
         ),
     )
-    retention = (
-        f"Best {config.checkpoint_top_k} + latest"
-        if config.checkpoint_top_k
-        else "Latest only"
-    )
     table.add_row(
         "Checkpoints",
-        Text(
-            f"{retention} · after each evaluation"
-            if config.save_checkpoints
-            else "Disabled",
-            style="" if config.save_checkpoints else "dim",
-        ),
+        f"Best {config.checkpoint_top_k} + latest · after each evaluation",
     )
     width, height = config.video_size
     table.add_row(
@@ -520,7 +516,8 @@ def run_training(config: TrainConfig) -> None:
             start_step=config.early_stopping_min_epochs * len(train_loader),
             objective="max",
         )
-        if config.early_stopping_patience is not None else None
+        if config.early_stopping_patience is not None
+        else None
     )
     stop_requested = False
     stop_reason = "max_epochs"
@@ -708,20 +705,19 @@ def run_training(config: TrainConfig) -> None:
                             f"{result.mean_reward:.3f}@{global_step}"
                         )
                         progress.set_postfix(display_metrics, refresh=False)
-                        if config.save_checkpoints:
-                            progress.set_description_str("Saving")
+                        progress.set_description_str("Saving")
 
-                            pending_cleanup = save_checkpoint_and_retain(
-                                model=model,
-                                step=global_step,
-                                checkpoint_dir=log_dir / "checkpoints",
-                                run=run,
-                                mean_reward=result.mean_reward,
-                                top_k=config.checkpoint_top_k,
-                                checkpoints=checkpoints,
-                                normalizer=normalizer,
-                                flow_num_steps=config.flow_num_steps,
-                            )
+                        pending_cleanup = save_checkpoint_and_retain(
+                            model=model,
+                            step=global_step,
+                            checkpoint_dir=log_dir / "checkpoints",
+                            run=run,
+                            mean_reward=result.mean_reward,
+                            top_k=config.checkpoint_top_k,
+                            checkpoints=checkpoints,
+                            normalizer=normalizer,
+                            flow_num_steps=config.flow_num_steps,
+                        )
 
                         if stopper is not None and not training_complete:
                             stop_requested = stopper.update(

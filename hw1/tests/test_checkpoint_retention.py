@@ -98,15 +98,6 @@ class TestCheckpointRetention:
         assert self.local_steps() == {1, 2, 6}
         assert self.aliases == {"best": 6, "latest": 6}
 
-    def test_zero_keeps_only_latest(self):
-        """Keeps the zero-retention option usable without accumulating files or a best
-        alias."""
-        self.save(1, 1.0, top_k=0)
-        self.save(2, 0.1, top_k=0)
-        assert set(self.checkpoints) == {2}
-        assert self.local_steps() == {2}
-        assert self.aliases == {"latest": 2}
-
     def test_failed_upload_does_not_prune(self):
         """Upload failure preserves the previously committed retention state.
 
@@ -119,7 +110,7 @@ class TestCheckpointRetention:
             Fail the artifact completion boundary and observe local files and
             service calls.
         """
-        self.save(1, 1.0, top_k=0)
+        self.save(1, 0.1, top_k=1)
         before = dict(self.checkpoints)
         aliases_before = dict(self.aliases)
         original_upload = self.run.log_artifact.side_effect
@@ -133,7 +124,7 @@ class TestCheckpointRetention:
         self.run.log_artifact.side_effect = upload
         self.upload_error = RuntimeError("upload failed")
         with pytest.raises(RuntimeError, match="upload failed"):
-            self.save(2, 0.1, top_k=0)
+            self.save(2, 0.2, top_k=1)
         assert set(self.checkpoints) == {1}
         assert self.local_steps() == {1, 2}
         assert self.checkpoints == before
@@ -152,16 +143,16 @@ class TestCheckpointRetention:
             Toggle deletion failure in the service fake and inspect retry state
             through recovery.
         """
-        self.save(1, 1.0, top_k=0)
+        self.save(1, 0.1, top_k=1)
         self.artifacts[1].delete.side_effect = RuntimeError("network unavailable")
         caplog.clear()
         with caplog.at_level("ERROR"):
-            assert self.save(2, 0.1, top_k=0) == {1}
+            assert self.save(2, 0.2, top_k=1) == {1}
         assert any(record.levelno >= logging.ERROR for record in caplog.records)
         assert set(self.checkpoints) == {1, 2}
         assert self.local_steps() == {2}
         self.artifacts[1].delete.side_effect = None
-        assert self.save(3, 0.2, top_k=0) == set()
+        assert self.save(3, 0.3, top_k=1) == set()
         assert set(self.checkpoints) == {3}
         assert self.artifacts[1].delete.call_count == 2
 
@@ -178,23 +169,23 @@ class TestCheckpointRetention:
             Inject a filesystem deletion error, restore the operation, and save
             again.
         """
-        self.save(1, 1.0, top_k=0)
+        self.save(1, 0.1, top_k=1)
         caplog.clear()
         with (
             patch.object(Path, "unlink", side_effect=OSError("permission denied")),
             caplog.at_level("ERROR"),
         ):
-            assert self.save(2, 0.1, top_k=0) == {1}
+            assert self.save(2, 0.2, top_k=1) == {1}
         assert any(record.levelno >= logging.ERROR for record in caplog.records)
         assert self.local_steps() == {1, 2}
         self.artifacts[1].delete.assert_not_called()
 
-        assert self.save(3, 0.2, top_k=0) == set()
+        assert self.save(3, 0.3, top_k=1) == set()
         assert self.local_steps() == {3}
         assert set(self.checkpoints) == {3}
         self.artifacts[1].delete.assert_called_once_with()
 
-    @pytest.mark.parametrize("top_k,expected", ((0, {5}), (3, {1, 2, 3, 5})))
+    @pytest.mark.parametrize("top_k,expected", ((1, {1, 5}), (3, {1, 2, 3, 5})))
     def test_local_only_retention_does_not_use_global_wandb_run(self, top_k, expected):
         """Local retention remains independent of ambient W&B state.
 
@@ -239,6 +230,7 @@ class TestCheckpointRetention:
             (float("inf"), 3, False, "finite"),
             (-float("inf"), 3, False, "finite"),
             (0.5, -1, False, "top_k"),
+            (0.5, 0, False, "top_k"),
             (0.5, 3, True, "online"),
         ],
     )

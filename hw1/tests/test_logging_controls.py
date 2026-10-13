@@ -18,10 +18,10 @@ class TestLoggingControls:
         """Catches output flags accidentally disabling another independently controlled
         output."""
         defaults = train.parse_train_config([])
-        for field in ("log_csv", "log_wandb", "save_checkpoints", "show_summary"):
+        for field in ("log_csv", "log_wandb", "show_summary"):
             assert getattr(defaults, field)
             parsed = train.parse_train_config(["--no-" + field.replace("_", "-")])
-            for other in ("log_csv", "log_wandb", "save_checkpoints", "show_summary"):
+            for other in ("log_csv", "log_wandb", "show_summary"):
                 assert getattr(parsed, other) == (other != field)
 
     def test_disabled_logger_skips_video_validation(self, tmp_path):
@@ -41,15 +41,10 @@ class TestLoggingControls:
     "log_wandb", [False, True], ids=["log_wandb=off", "log_wandb=on"]
 )
 @pytest.mark.parametrize(
-    "save_checkpoints",
-    [False, True],
-    ids=["save_checkpoints=off", "save_checkpoints=on"],
-)
-@pytest.mark.parametrize(
     "show_summary", [False, True], ids=["show_summary=off", "show_summary=on"]
 )
 def test_all_output_combinations(
-    log_csv, log_wandb, save_checkpoints, show_summary, tmp_path, capsys, monkeypatch
+    log_csv, log_wandb, show_summary, tmp_path, capsys, monkeypatch
 ):
     """Training output controls operate independently.
 
@@ -80,7 +75,6 @@ def test_all_output_combinations(
     config = train.TrainConfig(
         log_csv=log_csv,
         log_wandb=log_wandb,
-        save_checkpoints=save_checkpoints,
         show_summary=show_summary,
         hidden_dims=(4,),
         chunk_size=1,
@@ -200,14 +194,11 @@ def test_all_output_combinations(
         assert rows == [expected_row]
 
     checkpoints = list(root.rglob("*.pt"))
-    assert len(checkpoints) == int(save_checkpoints)
-    if save_checkpoints:
-        assert checkpoints[0].parent.name == "checkpoints"
-        load_policy(checkpoints[0])
-    else:
-        assert list(root.rglob("checkpoints")) == []
+    assert len(checkpoints) == 1
+    assert checkpoints[0].parent.name == "checkpoints"
+    load_policy(checkpoints[0])
 
-    if log_wandb and save_checkpoints:
+    if log_wandb:
         artifact.assert_called_once()
         run.log_artifact.assert_called_once()
         run.log_artifact.return_value.wait.assert_called_once()
