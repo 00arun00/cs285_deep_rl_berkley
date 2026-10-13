@@ -201,3 +201,13 @@ Tests cover policy round trips, training, evaluation budgets, logging, checkpoin
 retention, and random-stream isolation. Data access, physics environments, and W&B
 services are mocked. An accelerator transfer test runs when hardware is available;
 the suite does not exercise GPU training or remote uploads.
+
+## Early stopping
+
+Stop when rollout reward plateaus. Disabled by default.
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `early_stopping_patience` | `None` | Enable with a positive number of stale evaluations |
+| `early_stopping_min_epochs` | `100` | Warm-up before counting stale evaluations |
+| `early_stopping_min_delta` | `0.005` | Reward gain must exceed this to reset patience |
