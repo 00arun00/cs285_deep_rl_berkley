@@ -137,12 +137,17 @@ class TrainConfig:
         ):
             streams.validate(stream, variation=variation)
 
-        if self.early_stopping_patience is not None and self.early_stopping_patience <= 0:
+        if (
+            self.early_stopping_patience is not None
+            and self.early_stopping_patience <= 0
+        ):
             raise ValueError("early_stopping_patience must be positive")
         if self.early_stopping_min_epochs < 0:
             raise ValueError("early_stopping_min_epochs must be nonnegative")
-        if (not math.isfinite(self.early_stopping_min_delta)
-                or self.early_stopping_min_delta < 0):
+        if (
+            not math.isfinite(self.early_stopping_min_delta)
+            or self.early_stopping_min_delta < 0
+        ):
             raise ValueError("early_stopping_min_delta must be finite and nonnegative")
 
         if self.checkpoint_top_k < 0:
@@ -268,7 +273,9 @@ def build_training_summary(
     table.add_row("Metric interval", f"Every {config.log_interval:,} steps + final")
     table.add_row(
         "Early stopping",
-        "Disabled" if config.early_stopping_patience is None else (
+        "Disabled"
+        if config.early_stopping_patience is None
+        else (
             f"{config.early_stopping_patience} stale rollouts; "
             f"warm-up {config.early_stopping_min_epochs} epochs; "
             f"minimum gain {config.early_stopping_min_delta:g}"
@@ -520,7 +527,8 @@ def run_training(config: TrainConfig) -> None:
             start_step=config.early_stopping_min_epochs * len(train_loader),
             objective="max",
         )
-        if config.early_stopping_patience is not None else None
+        if config.early_stopping_patience is not None
+        else None
     )
     stop_requested = False
     stop_reason = "max_epochs"
