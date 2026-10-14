@@ -77,25 +77,29 @@ schedules are unchanged. Video count is capped by the rollout episode count.
 
 ## Reusing policy checkpoints
 
-Checkpoints are always saved. CSV metrics and W&B reporting can be disabled
-independently:
+CSV metrics, W&B reporting, and checkpoint saving are enabled by default and
+can be disabled independently:
 
 ```bash
 uv run src/hw1_imitation/train.py --no-log-wandb
-uv run src/hw1_imitation/train.py --no-log-csv --no-log-wandb
+uv run src/hw1_imitation/train.py --no-log-csv --no-log-wandb --no-save-checkpoints
 ```
 
-- `--no-log-csv` disables metric CSVs; `--no-log-wandb` disables W&B reporting
-  and uploads. Neither disables local checkpoints.
-- Each rollout evaluation saves `exp/<experiment_name>/checkpoints/policy_step_<step>.pt`.
-- `--checkpoint-top-k` (default: 3) must be positive; retain the best K plus
-  latest. Higher rollout rewards win; ties favor earlier steps.
-- Remove `--save-checkpoints` / `--no-save-checkpoints` from old commands;
-  replace `--checkpoint-top-k 0` with a positive value.
-- Videos remain enabled unless `--num-video-episodes 0` is supplied.
+`--no-log-csv` prevents metric CSV creation and writes. `--no-log-wandb` skips
+W&B initialization, metrics, video uploads, and checkpoint artifacts.
+`--no-save-checkpoints` skips both local checkpoints and their W&B artifacts.
+Progress, warnings, validation, and rollout evaluation remain enabled. Videos
+are still recorded unless `--num-video-episodes 0` is supplied. The run directory
+is still created even when all three outputs are disabled.
+
+When checkpoint saving is enabled, each rollout evaluation (including the final
+training step) saves `exp/<experiment_name>/checkpoints/policy_step_<step>.pt`.
+`--checkpoint-top-k` (default: 3) retains the best K by rollout mean reward plus
+latest. Ties favor earlier checkpoints; zero keeps only latest. This setting has
+no effect when checkpoint saving is disabled.
 
 With W&B enabled, checkpoints are also uploaded as model artifacts, with `best`
-and `latest` aliases. Pruning waits for upload completion. Local-only
+(when K > 0) and `latest` aliases. Pruning waits for upload completion. Local-only
 runs apply the same retention without W&B. Cleanup failures are logged and retried
 at the next save; pending cleanup is reported at the end of training. Retry state
 does not persist across runs. Offline W&B runs remain unsupported; use
