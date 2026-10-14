@@ -3,9 +3,10 @@
 from io import StringIO
 from pathlib import Path
 
+from hw1_imitation.logging_utils import build_training_summary
 from hw1_imitation.model import PolicyConfig, build_policy
 from hw1_imitation.randomness import RandomStreamFactory, StreamId
-from hw1_imitation.train import TrainConfig, build_training_summary
+from hw1_imitation.train import TrainConfig
 from rich.console import Console
 
 from .summary_helpers import summary_row_value
