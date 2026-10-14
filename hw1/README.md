@@ -77,8 +77,7 @@ schedules are unchanged. Video count is capped by the rollout episode count.
 
 ## Reusing policy checkpoints
 
-CSV metrics, W&B reporting, and checkpoint saving are enabled by default and
-can be disabled independently:
+CSV metrics, W&B reporting, and persistent checkpoints are enabled by default:
 
 ```bash
 uv run src/hw1_imitation/train.py --no-log-wandb
@@ -87,16 +86,18 @@ uv run src/hw1_imitation/train.py --no-log-csv --no-log-wandb --no-save-checkpoi
 
 `--no-log-csv` prevents metric CSV creation and writes. `--no-log-wandb` skips
 W&B initialization, metrics, video uploads, and checkpoint artifacts.
-`--no-save-checkpoints` skips both local checkpoints and their W&B artifacts.
+`--no-save-checkpoints` saves checkpoints in a unique temporary directory per
+run instead of the experiment directory. W&B uploads and retention still apply.
+Temporary directories are not automatically removed after training.
 Progress, warnings, validation, and rollout evaluation remain enabled. Videos
 are still recorded unless `--num-video-episodes 0` is supplied. The run directory
-is still created even when all three outputs are disabled.
+is still created with all three flags supplied.
 
-When checkpoint saving is enabled, each rollout evaluation (including the final
-training step) saves `exp/<experiment_name>/checkpoints/policy_step_<step>.pt`.
+Each rollout evaluation (including the final training step) saves a checkpoint.
+By default, its path is `exp/<experiment_name>/checkpoints/policy_step_<step>.pt`.
 `--checkpoint-top-k` (default: 3) retains the best K by rollout mean reward plus
-latest. Ties favor earlier checkpoints; zero keeps only latest. This setting has
-no effect when checkpoint saving is disabled.
+latest. Ties favor earlier checkpoints; zero keeps only latest. This applies to
+both persistent and temporary storage.
 
 With W&B enabled, checkpoints are also uploaded as model artifacts, with `best`
 (when K > 0) and `latest` aliases. Pruning waits for upload completion. Local-only
