@@ -117,10 +117,13 @@ class TestTrainingSummary:
             )
         )
         rendered = self.render(summary)
-        for label in ("CSV logging", "W&B", "Checkpoints", "Videos"):
+        for label in ("CSV logging", "W&B", "Videos"):
             assert summary_row_value(rendered, label) == "Disabled"
         assert "cs285-hw1" not in rendered
-        assert "Best 3" not in rendered
+        checkpoints = summary_row_value(rendered, "Checkpoints")
+        assert "Best 3 + latest" in checkpoints
+        assert "Temporary directory" in checkpoints
+        assert "after each evaluation" in checkpoints
         enabled = dict(
             summary,
             config=TrainConfig(
@@ -130,6 +133,7 @@ class TestTrainingSummary:
         )
         rendered = self.render(enabled)
         assert "Latest only" in summary_row_value(rendered, "Checkpoints")
+        assert "Experiment directory" in summary_row_value(rendered, "Checkpoints")
         assert "150 episodes" in summary_row_value(rendered, "Videos")
 
     def test_narrow_terminal_wraps_without_losing_values(self):

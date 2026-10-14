@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+import tempfile
 from collections.abc import Sequence
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass
@@ -308,12 +309,13 @@ def build_training_summary(
         if config.checkpoint_top_k
         else "Latest only"
     )
+    storage = (
+        "Experiment directory" if config.save_checkpoints else "Temporary directory"
+    )
     table.add_row(
         "Checkpoints",
         Text(
-            f"{retention} · after each evaluation"
-            if config.save_checkpoints
-            else "Disabled",
+            f"{retention} · after each evaluation · to {storage}",
             style="" if config.save_checkpoints else "dim",
         ),
     )
@@ -519,6 +521,12 @@ def run_training(config: TrainConfig) -> None:
     log_dir = Path(LOGDIR_PREFIX) / exp_name
     log_dir.mkdir(parents=True, exist_ok=False)
 
+    checkpoint_dir = (
+        log_dir / "checkpoints"
+        if config.save_checkpoints
+        else Path(tempfile.mkdtemp(prefix=f"hw1-{exp_name}-checkpoints-"))
+    )
+
     total_steps = config.num_epochs * len(train_loader)
     stopper = (
         EarlyStopping(
@@ -716,20 +724,20 @@ def run_training(config: TrainConfig) -> None:
                             f"{result.mean_reward:.3f}@{global_step}"
                         )
                         progress.set_postfix(display_metrics, refresh=False)
-                        if config.save_checkpoints:
-                            progress.set_description_str("Saving")
 
-                            pending_cleanup = save_checkpoint_and_retain(
-                                model=model,
-                                step=global_step,
-                                checkpoint_dir=log_dir / "checkpoints",
-                                run=run,
-                                mean_reward=result.mean_reward,
-                                top_k=config.checkpoint_top_k,
-                                checkpoints=checkpoints,
-                                normalizer=normalizer,
-                                flow_num_steps=config.flow_num_steps,
-                            )
+                        progress.set_description_str("Saving")
+
+                        pending_cleanup = save_checkpoint_and_retain(
+                            model=model,
+                            step=global_step,
+                            checkpoint_dir=checkpoint_dir,
+                            run=run,
+                            mean_reward=result.mean_reward,
+                            top_k=config.checkpoint_top_k,
+                            checkpoints=checkpoints,
+                            normalizer=normalizer,
+                            flow_num_steps=config.flow_num_steps,
+                        )
 
                         if stopper is not None and not training_complete:
                             stop_requested = stopper.update(

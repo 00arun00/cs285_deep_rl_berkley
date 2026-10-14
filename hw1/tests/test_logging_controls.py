@@ -49,7 +49,14 @@ class TestLoggingControls:
     "show_summary", [False, True], ids=["show_summary=off", "show_summary=on"]
 )
 def test_all_output_combinations(
-    log_csv, log_wandb, save_checkpoints, show_summary, tmp_path, capsys, monkeypatch
+    log_csv,
+    log_wandb,
+    save_checkpoints,
+    show_summary,
+    tmp_path,
+    capsys,
+    monkeypatch,
+    isolate_checkpoint_tempdir,
 ):
     """Training output controls operate independently.
 
@@ -76,7 +83,8 @@ def test_all_output_combinations(
             for i in range(episode_count)
         )
     )
-    root = tmp_path
+    root = tmp_path / "experiments"
+    root.mkdir()
     config = train.TrainConfig(
         log_csv=log_csv,
         log_wandb=log_wandb,
@@ -206,8 +214,13 @@ def test_all_output_combinations(
         load_policy(checkpoints[0])
     else:
         assert list(root.rglob("checkpoints")) == []
+        temporary = list(isolate_checkpoint_tempdir.glob("hw1-*-checkpoints-*"))
+        assert len(temporary) == 1
+        checkpoints = list(temporary[0].glob("*.pt"))
+        assert len(checkpoints) == 1
+        load_policy(checkpoints[0])
 
-    if log_wandb and save_checkpoints:
+    if log_wandb:
         artifact.assert_called_once()
         run.log_artifact.assert_called_once()
         run.log_artifact.return_value.wait.assert_called_once()
