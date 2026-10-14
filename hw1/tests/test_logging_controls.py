@@ -1,6 +1,7 @@
 """Exercise output controls without network access or environment rollouts."""
 
 import csv
+from contextlib import nullcontext
 from unittest.mock import patch
 
 import numpy as np
@@ -37,6 +38,7 @@ class TestLoggingControls:
 
 
 @pytest.mark.parametrize("log_csv", [False, True], ids=["log_csv=off", "log_csv=on"])
+@pytest.mark.parametrize("fail_after_save", [False, True], ids=["success", "failure"])
 @pytest.mark.parametrize(
     "log_wandb", [False, True], ids=["log_wandb=off", "log_wandb=on"]
 )
@@ -57,6 +59,7 @@ def test_all_output_combinations(
     capsys,
     monkeypatch,
     isolate_checkpoint_tempdir,
+    fail_after_save,
 ):
     """Training output controls operate independently.
 
@@ -98,7 +101,20 @@ def test_all_output_combinations(
     )
     real_step = train.train_step
     real_validation = train.compute_validation_loss
+    real_save = train.save_checkpoint_and_retain
     observed = {}
+
+    def save(*args, **kwargs):
+        pending = real_save(*args, **kwargs)
+        paths = list(kwargs["checkpoint_dir"].glob("*.pt"))
+        assert len(paths) == 1
+        load_policy(paths[0])
+        observed["checkpoint"] = paths[0]
+        if not save_checkpoints:
+            assert paths[0].is_relative_to(isolate_checkpoint_tempdir)
+        if fail_after_save:
+            raise RuntimeError("injected failure after checkpoint save")
+        return pending
 
     def step(*args, **kwargs):
         result = real_step(*args, **kwargs)
@@ -114,6 +130,7 @@ def test_all_output_combinations(
     with (
         patch.object(train, "train_step", side_effect=step),
         patch.object(train, "compute_validation_loss", side_effect=validate),
+        patch.object(train, "save_checkpoint_and_retain", side_effect=save),
         patch.object(train, "LOGDIR_PREFIX", str(root)),
         patch.object(train, "download_pusht", return_value=root),
         patch.object(train, "load_episodes_dataset", return_value=episodes),
@@ -133,7 +150,12 @@ def test_all_output_combinations(
         run = initialize.return_value.__enter__.return_value
         run.offline = False
         run.id = "test"
-        train.run_training(config)
+        with (
+            pytest.raises(RuntimeError, match="injected failure after checkpoint save")
+            if fail_after_save
+            else nullcontext()
+        ):
+            train.run_training(config)
 
     captured = capsys.readouterr()
     if show_summary:
@@ -214,11 +236,13 @@ def test_all_output_combinations(
         load_policy(checkpoints[0])
     else:
         assert list(root.rglob("checkpoints")) == []
-        temporary = list(isolate_checkpoint_tempdir.glob("hw1-*-checkpoints-*"))
-        assert len(temporary) == 1
-        checkpoints = list(temporary[0].glob("*.pt"))
-        assert len(checkpoints) == 1
-        load_policy(checkpoints[0])
+        if fail_after_save:
+            assert list(isolate_checkpoint_tempdir.iterdir()) == [
+                observed["checkpoint"].parent
+            ]
+            load_policy(observed["checkpoint"])
+        else:
+            assert list(isolate_checkpoint_tempdir.iterdir()) == []
 
     if log_wandb:
         artifact.assert_called_once()

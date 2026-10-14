@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 import math
+import shutil
 import tempfile
 from collections.abc import Sequence
-from contextlib import nullcontext
+from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -355,6 +356,18 @@ def config_to_dict(config: TrainConfig) -> dict[str, Any]:
     return data
 
 
+# Needed only to preserve the temp dir with checkpoints in case of runtime failure.
+# This directory will still be in /tmp so will get auto cleaned by os; based on os config.
+# But gives us the opportunity to inspect and potentially continue with
+# further training, if a training run fails mid training.
+@contextmanager
+def temp_checkpoint_dir(exp_name: str):
+    path = Path(tempfile.mkdtemp(prefix=f"hw1-{exp_name}-checkpoints-"))
+    yield path
+    # Only clean up after successful completion.
+    shutil.rmtree(path)
+
+
 def build_loaders(
     config: TrainConfig,
     train_episodes: Dataset[Episode],
@@ -521,12 +534,6 @@ def run_training(config: TrainConfig) -> None:
     log_dir = Path(LOGDIR_PREFIX) / exp_name
     log_dir.mkdir(parents=True, exist_ok=False)
 
-    checkpoint_dir = (
-        log_dir / "checkpoints"
-        if config.save_checkpoints
-        else Path(tempfile.mkdtemp(prefix=f"hw1-{exp_name}-checkpoints-"))
-    )
-
     total_steps = config.num_epochs * len(train_loader)
     stopper = (
         EarlyStopping(
@@ -553,18 +560,43 @@ def run_training(config: TrainConfig) -> None:
     wandb_run_config = config_to_dict(config)
     wandb_run_config["model_config"] = asdict(model.config)
 
-    tracking_context = (
-        wandb.init(
-            project=config.wandb_project,
-            config=wandb_run_config,
-            name=exp_name,
-            dir=str(log_dir),
+    with ExitStack() as stack:
+        # Checkpoint Directory management.
+        # Auto clears temp dirs on successful completion only.
+        checkpoint_dir = (
+            log_dir / "checkpoints"
+            if config.save_checkpoints
+            else stack.enter_context(temp_checkpoint_dir(exp_name=exp_name))
         )
-        if config.log_wandb
-        else nullcontext(None)
-    )
 
-    with tracking_context as run:
+        run = (
+            stack.enter_context(
+                wandb.init(
+                    project=config.wandb_project,
+                    config=wandb_run_config,
+                    name=exp_name,
+                    dir=str(log_dir),
+                )
+            )
+            if config.log_wandb
+            else None
+        )
+
+        progress = stack.enter_context(
+            tqdm(
+                total=total_steps,
+                desc="Train",
+                unit="step",
+                position=0,
+                leave=True,
+                dynamic_ncols=True,
+                mininterval=0.5,
+                miniters=1,
+                disable=None,
+                postfix=display_metrics,
+            )
+        )
+
         if run is not None and run.offline:
             raise ValueError(
                 "Offline W&B is not supported by this training driver. "
@@ -600,169 +632,149 @@ def run_training(config: TrainConfig) -> None:
                 )
             )
 
-        with tqdm(
-            total=total_steps,
-            desc="Train",
-            unit="step",
-            position=0,
-            leave=True,
-            dynamic_ncols=True,
-            mininterval=0.5,
-            miniters=1,
-            disable=None,
-            postfix=display_metrics,
-        ) as progress:
-            for epoch in range(config.num_epochs):
-                display_metrics["epoch"] = f"{epoch + 1}/{config.num_epochs}"
-                progress.set_postfix(display_metrics, refresh=False)
-                for state, action_chunk in train_loader:
-                    loss = train_step(
+        epoch = 0
+        for epoch in range(config.num_epochs):
+            display_metrics["epoch"] = f"{epoch + 1}/{config.num_epochs}"
+            progress.set_postfix(display_metrics, refresh=False)
+            for state, action_chunk in train_loader:
+                loss = train_step(
+                    model=model,
+                    optimizer=optimizer,
+                    state=state.to(device),
+                    action_chunk=action_chunk.to(device),
+                    generator=train_loss_generator,
+                )
+                global_step += 1
+
+                # compute_loss() returns a batch mean. Weight it by the
+                # number of examples before combining it with other batches.
+
+                batch_examples = state.shape[0]
+                loss_sum += loss.item() * batch_examples
+                window_examples_count += batch_examples
+
+                training_complete = global_step == total_steps
+                eval_due = global_step % config.eval_interval == 0 or training_complete
+                log_due = global_step % config.log_interval == 0 or training_complete
+                validation_due = (
+                    global_step % config.validation_interval == 0 or training_complete
+                )
+
+                if log_due:
+                    mean_loss = loss_sum / window_examples_count
+
+                    logger.log_train(
+                        global_step=global_step,
+                        epoch=epoch,
+                        loss_window_mean=mean_loss,
+                        window_examples_count=window_examples_count,
+                    )
+
+                    display_metrics["loss"] = f"{mean_loss:.4g}"
+                    progress.set_postfix(display_metrics, refresh=False)
+
+                    loss_sum = 0.0
+                    window_examples_count = 0
+
+                # Advance after the optimizer step; tqdm throttles redraws.
+                progress.update(1)
+
+                if validation_due:
+                    # Restart validation RNG for each complete pass so checkpoints use
+                    # matching draws, assuming unchanged batch order and sampling shapes.
+                    validation_result = compute_validation_loss(
                         model=model,
-                        optimizer=optimizer,
-                        state=state.to(device),
-                        action_chunk=action_chunk.to(device),
-                        generator=train_loss_generator,
-                    )
-                    global_step += 1
-
-                    # compute_loss() returns a batch mean. Weight it by the
-                    # number of examples before combining it with other batches.
-
-                    batch_examples = state.shape[0]
-                    loss_sum += loss.item() * batch_examples
-                    window_examples_count += batch_examples
-
-                    training_complete = global_step == total_steps
-                    eval_due = (
-                        global_step % config.eval_interval == 0 or training_complete
-                    )
-                    log_due = (
-                        global_step % config.log_interval == 0 or training_complete
-                    )
-                    validation_due = (
-                        global_step % config.validation_interval == 0
-                        or training_complete
-                    )
-
-                    if log_due:
-                        mean_loss = loss_sum / window_examples_count
-
-                        logger.log_train(
-                            global_step=global_step,
-                            epoch=epoch,
-                            loss_window_mean=mean_loss,
-                            window_examples_count=window_examples_count,
-                        )
-
-                        display_metrics["loss"] = f"{mean_loss:.4g}"
-                        progress.set_postfix(display_metrics, refresh=False)
-
-                        loss_sum = 0.0
-                        window_examples_count = 0
-
-                    # Advance after the optimizer step; tqdm throttles redraws.
-                    progress.update(1)
-
-                    if validation_due:
-                        # Restart validation RNG for each complete pass so checkpoints use
-                        # matching draws, assuming unchanged batch order and sampling shapes.
-                        validation_result = compute_validation_loss(
-                            model=model,
-                            loader=validation_loader,
+                        loader=validation_loader,
+                        device=device,
+                        generator=streams.torch(
+                            StreamId.VALIDATION_LOSS,
+                            variation=config.validation_loss_variation,
                             device=device,
-                            generator=streams.torch(
-                                StreamId.VALIDATION_LOSS,
-                                variation=config.validation_loss_variation,
-                                device=device,
-                            ),
-                        )
-                        logger.log_validation(
-                            global_step=global_step,
-                            loss_mean=validation_result.loss_mean,
-                            examples_count=validation_result.examples_count,
-                        )
+                        ),
+                    )
+                    logger.log_validation(
+                        global_step=global_step,
+                        loss_mean=validation_result.loss_mean,
+                        examples_count=validation_result.examples_count,
+                    )
 
-                        display_metrics["val"] = f"{validation_result.loss_mean:.4g}"
-                        progress.set_postfix(display_metrics, refresh=False)
+                    display_metrics["val"] = f"{validation_result.loss_mean:.4g}"
+                    progress.set_postfix(display_metrics, refresh=False)
 
-                    if eval_due:
-                        progress.set_description_str("Evaluating")
-                        video_dir = None
-                        if config.num_video_episodes > 0:
-                            video_dir = log_dir / "videos" / f"step_{global_step:08d}"
-                            video_dir.mkdir(parents=True, exist_ok=False)
+                if eval_due:
+                    progress.set_description_str("Evaluating")
+                    video_dir = None
+                    if config.num_video_episodes > 0:
+                        video_dir = log_dir / "videos" / f"step_{global_step:08d}"
+                        video_dir.mkdir(parents=True, exist_ok=False)
 
-                        result = evaluate_policy(
-                            model=model,
-                            normalizer=normalizer,
-                            device=device,
-                            chunk_size=model.chunk_size,
-                            video_size=config.video_size,
-                            num_video_episodes=config.num_video_episodes,
-                            num_eval_episodes=(
-                                config.final_eval_episodes
-                                if training_complete
-                                else config.eval_episodes
-                            ),
-                            flow_num_steps=config.flow_num_steps,
-                            streams=streams,
-                            env_variation=config.eval_env_variation,
-                            policy_variation=config.eval_policy_variation,
-                            video_dir=video_dir,
-                            show_progress=not progress.disable,
-                            progress_position=1,
-                        )
+                    result = evaluate_policy(
+                        model=model,
+                        normalizer=normalizer,
+                        device=device,
+                        chunk_size=model.chunk_size,
+                        video_size=config.video_size,
+                        num_video_episodes=config.num_video_episodes,
+                        num_eval_episodes=(
+                            config.final_eval_episodes
+                            if training_complete
+                            else config.eval_episodes
+                        ),
+                        flow_num_steps=config.flow_num_steps,
+                        streams=streams,
+                        env_variation=config.eval_env_variation,
+                        policy_variation=config.eval_policy_variation,
+                        video_dir=video_dir,
+                        show_progress=not progress.disable,
+                        progress_position=1,
+                    )
 
-                        logger.log_eval(
-                            global_step=global_step,
-                            mean_reward=result.mean_reward,
-                            num_episodes=result.num_episodes,
-                            video_paths=result.video_paths,
-                        )
+                    logger.log_eval(
+                        global_step=global_step,
+                        mean_reward=result.mean_reward,
+                        num_episodes=result.num_episodes,
+                        video_paths=result.video_paths,
+                    )
 
-                        display_metrics["eval"] = (
-                            f"{result.mean_reward:.3f}@{global_step}"
-                        )
-                        progress.set_postfix(display_metrics, refresh=False)
+                    display_metrics["eval"] = f"{result.mean_reward:.3f}@{global_step}"
+                    progress.set_postfix(display_metrics, refresh=False)
 
-                        progress.set_description_str("Saving")
+                    progress.set_description_str("Saving")
 
-                        pending_cleanup = save_checkpoint_and_retain(
-                            model=model,
+                    pending_cleanup = save_checkpoint_and_retain(
+                        model=model,
+                        step=global_step,
+                        checkpoint_dir=checkpoint_dir,
+                        run=run,
+                        mean_reward=result.mean_reward,
+                        top_k=config.checkpoint_top_k,
+                        checkpoints=checkpoints,
+                        normalizer=normalizer,
+                        flow_num_steps=config.flow_num_steps,
+                    )
+
+                    if stopper is not None and not training_complete:
+                        stop_requested = stopper.update(
                             step=global_step,
-                            checkpoint_dir=checkpoint_dir,
-                            run=run,
-                            mean_reward=result.mean_reward,
-                            top_k=config.checkpoint_top_k,
-                            checkpoints=checkpoints,
-                            normalizer=normalizer,
-                            flow_num_steps=config.flow_num_steps,
+                            value=result.mean_reward,
                         )
+                        if stop_requested:
+                            stop_reason = "plateau"
+                    progress.set_description_str("Train")
 
-                        if stopper is not None and not training_complete:
-                            stop_requested = stopper.update(
-                                step=global_step,
-                                value=result.mean_reward,
-                            )
-                            if stop_requested:
-                                stop_reason = "plateau"
-                        progress.set_description_str("Train")
-
-                    if stop_requested:
-                        break
                 if stop_requested:
                     break
+            if stop_requested:
+                break
 
-            if window_examples_count:
-                logger.log_train(
-                    global_step=global_step,
-                    epoch=epoch,
-                    loss_window_mean=loss_sum / window_examples_count,
-                    window_examples_count=window_examples_count,
-                )
-            progress.set_description_str(
-                "Stopped (plateau)" if stop_requested else "Done"
+        if window_examples_count:
+            logger.log_train(
+                global_step=global_step,
+                epoch=epoch,
+                loss_window_mean=loss_sum / window_examples_count,
+                window_examples_count=window_examples_count,
             )
+        progress.set_description_str("Stopped (plateau)" if stop_requested else "Done")
 
         logging.info("Training ended at step %s: %s", global_step, stop_reason)
         if run is not None:
