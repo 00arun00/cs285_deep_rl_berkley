@@ -94,10 +94,11 @@ def save(policy, stats, root, records, step, score, top_k, run):
     )
 
 
-def assert_aliases(service, history, latest):
+def assert_aliases(service, history, top_k, latest):
     expected = {"latest": latest}
-    # max keeps the first (earliest) item on a tie in insertion-ordered history.
-    expected["best"] = max(history, key=history.get)
+    if top_k:
+        # max keeps the first (earliest) item on a tie in insertion-ordered history.
+        expected["best"] = max(history, key=history.get)
     assert service.aliases == expected
 
 
@@ -105,11 +106,11 @@ def assert_aliases(service, history, latest):
 @settings(max_examples=50, deadline=None)
 @given(
     scores=st.lists(st.integers(-5, 5), min_size=1, max_size=10),
-    top_k=st.integers(1, 12),
+    top_k=st.integers(0, 12),
     step_gap=st.integers(1, 7),
 )
 @example(scores=[3, 3, 3, 3], top_k=2, step_gap=7)
-@example(scores=[5, 4, 3, 2, 1], top_k=1, step_gap=1)
+@example(scores=[5, 4, 3, 2, 1], top_k=0, step_gap=1)
 @example(scores=[-2, -1, 0, 1], top_k=8, step_gap=3)
 def test_retention_matches_full_history_after_every_save(
     remote, scores, top_k, step_gap
@@ -159,7 +160,7 @@ def test_retention_matches_full_history_after_every_save(
             }
             if remote:
                 assert service.live_steps == keep
-                assert_aliases(service, history, step)
+                assert_aliases(service, history, top_k, step)
         if not remote:
             artifact_factory.assert_not_called()
 
@@ -170,9 +171,9 @@ def test_retention_matches_full_history_after_every_save(
     events=st.lists(
         st.tuples(st.integers(-5, 5), st.booleans()), min_size=2, max_size=8
     ),
-    top_k=st.integers(1, 4),
+    top_k=st.integers(0, 4),
 )
-@example(events=[(3, False), (2, True), (1, True)], top_k=1)
+@example(events=[(3, False), (2, True), (1, True)], top_k=0)
 @example(events=[(3, False), (3, False), (2, True), (1, True), (4, False)], top_k=2)
 def test_cleanup_failures_preserve_retry_state_until_recovery(
     failure_target, events, top_k
@@ -239,4 +240,4 @@ def test_cleanup_failures_preserve_retry_state_until_recovery(
                 saved for saved, path in paths.items() if path.is_file()
             } == expected_local
             assert service.live_steps == expected_remote
-            assert_aliases(service, history, step)
+            assert_aliases(service, history, top_k, step)

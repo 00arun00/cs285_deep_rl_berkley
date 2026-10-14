@@ -105,7 +105,7 @@ def save_checkpoint_and_retain(
     """Save an evaluated policy and retain the best K plus latest.
 
     Call once per evaluation with increasing steps and a fixed top_k.
-    Higher rewards win; ties favor earlier steps. top_k must be positive.
+    Higher rewards win; ties favor earlier steps. Zero keeps only latest.
     A supplied W&B run must be online; omit it for local-only saving.
 
     When uploading, completion is confirmed before pruning. Cleanup failures are
@@ -114,8 +114,8 @@ def save_checkpoint_and_retain(
     """
     if run is not None and run.offline:
         raise ValueError("Remote checkpoint retention requires online W&B.")
-    if top_k < 1:
-        raise ValueError("top_k must be positive")
+    if top_k < 0:
+        raise ValueError("top_k must be nonnegative")
     if not math.isfinite(mean_reward):
         raise ValueError("Checkpoint mean_reward must be finite")
 
@@ -150,7 +150,7 @@ def save_checkpoint_and_retain(
 
         # Logging moves these aliases; it does not remove older versions.
         aliases = ["latest"]
-        if ranked_steps[0] == step:
+        if top_k > 0 and ranked_steps[0] == step:
             aliases.append("best")
         uploaded = run.log_artifact(artifact, aliases=aliases)
         uploaded.wait()
