@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import abc
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
 import torch
 from torch import nn
+
+from hw1_imitation.rng_modules import DropoutWithExplicitRNG, SequentialWithExplicitRNG
 
 PolicyType: TypeAlias = Literal["mse", "flow"]
 
@@ -56,8 +59,8 @@ class BasePolicy(nn.Module, metaclass=abc.ABCMeta):
     ) -> torch.Tensor:
         """Compute loss using caller-owned randomness.
 
-        Stochastic policies advance generator. Deterministic policies leave
-        it untouched. The generator must match the sampling device.
+        Stochastic loss sampling and active dropout advance generator.
+        Otherwise it is left untouched. The generator must match the sampling device.
         """
 
     @abc.abstractmethod
@@ -71,8 +74,17 @@ class BasePolicy(nn.Module, metaclass=abc.ABCMeta):
         """Return actions shaped (batch, chunk_size, action_dim).
 
         Stochastic policies advance the caller-owned generator.
+        Call eval() for inference without dropout.
         num_steps controls flow integration; MSE policies ignore it.
         """
+
+    def set_dropout_p(self, p: float) -> None:
+        """Set training dropout on fresh or loaded policies; not checkpoint state."""
+        if not 0.0 <= p < 1.0:
+            raise ValueError("dropout probability must be in [0, 1)")
+        for module in self.modules():
+            if isinstance(module, DropoutWithExplicitRNG):
+                module.p = p
 
     @property
     def state_dim(self) -> int:
@@ -87,8 +99,8 @@ class BasePolicy(nn.Module, metaclass=abc.ABCMeta):
         return self.config.chunk_size
 
 
-class SimpleMLP(nn.Sequential):
-    """Helper module to construct a simple MLP"""
+class MLP(SequentialWithExplicitRNG):
+    """Multilayer perceptron with dropout after hidden activations"""
 
     def __init__(
         self,
@@ -101,15 +113,16 @@ class SimpleMLP(nn.Sequential):
         if any(dim <= 0 for dim in dims):
             raise ValueError(f"All MLP dimensions must be positive; got {dims}")
 
-        layers = []
-        for input_size, output_size in zip(dims, dims[1:]):
-            layers.append(nn.Linear(input_size, output_size))
-            layers.append(nn.ReLU())
+        # Preserve the numeric names of existing parameterized layers so v1
+        # checkpoints remain compatible. Dropout has no parameters or buffers.
+        layers: OrderedDict[str, nn.Module] = OrderedDict()
+        for index, (input_size, output_size) in enumerate(zip(dims, dims[1:])):
+            layers[str(2 * index)] = nn.Linear(input_size, output_size)
+            if index < len(hidden_dims):
+                layers[str(2 * index + 1)] = nn.ReLU()
+                layers[f"dropout_{index}"] = DropoutWithExplicitRNG()
 
-        # The output layer has no activation.
-        layers.pop()
-
-        super().__init__(*layers)
+        super().__init__(layers)
 
     def reset_parameters(
         self,
@@ -134,7 +147,7 @@ class SimpleMLP(nn.Sequential):
                         bound,
                         generator=generator,
                     )
-            elif isinstance(layer, nn.ReLU):
+            elif isinstance(layer, (nn.ReLU, DropoutWithExplicitRNG)):
                 pass
             else:
                 raise TypeError(
@@ -152,7 +165,7 @@ class MSEPolicy(BasePolicy):
 
         super().__init__(config)
 
-        self.model = SimpleMLP(
+        self.model = MLP(
             input_dim=config.state_dim,
             hidden_dims=config.hidden_dims,
             output_dim=config.action_dim * config.chunk_size,
@@ -163,11 +176,11 @@ class MSEPolicy(BasePolicy):
         state: torch.Tensor,
         action_chunk: torch.Tensor,
         *,
-        generator: torch.Generator,  # model is deterministic, generator not used.
+        generator: torch.Generator,  # used by dropout only in training mode.
     ) -> torch.Tensor:
         target = action_chunk.flatten(start_dim=1)
         return nn.functional.mse_loss(
-            input=self.model(state),
+            input=self.model(state, generator=generator),
             target=target,
         )
 
@@ -175,11 +188,11 @@ class MSEPolicy(BasePolicy):
         self,
         state: torch.Tensor,
         *,
-        generator: torch.Generator,  # model is deterministic, generator not used.
+        generator: torch.Generator,  # used by dropout only in training mode.
         num_steps: int = 10,  # not used by the model.
     ) -> torch.Tensor:
-        predict = self.model(state)
-        return predict.reshape(
+        predicted_actions = self.model(state, generator=generator)
+        return predicted_actions.reshape(
             -1,
             self.chunk_size,
             self.action_dim,
@@ -202,23 +215,25 @@ class FlowMatchingPolicy(BasePolicy):
         input_dim = config.state_dim + config.action_dim * config.chunk_size + 1
         output_dim = config.action_dim * config.chunk_size
 
-        self.model = SimpleMLP(
+        self.model = MLP(
             input_dim=input_dim,
             hidden_dims=config.hidden_dims,
             output_dim=output_dim,
         )
 
-    def _forward(
+    def _predict_velocity(
         self,
         state: torch.Tensor,
         interpolated_action_chunk: torch.Tensor,
         tau: torch.Tensor,
+        *,
+        generator: torch.Generator | None = None,
     ) -> torch.Tensor:
         model_input = torch.concat(
             tensors=(state, interpolated_action_chunk, tau),
             dim=1,
         )
-        return self.model(model_input)
+        return self.model(model_input, generator=generator)
 
     def compute_loss(
         self,
@@ -253,10 +268,11 @@ class FlowMatchingPolicy(BasePolicy):
 
         target_vector = flat_action_chunk - noise_sample
 
-        predicted_velocity = self._forward(
+        predicted_velocity = self._predict_velocity(
             state=state,
             interpolated_action_chunk=interpolated_action_chunk,
             tau=tau_sample,
+            generator=generator,
         )
 
         return nn.functional.mse_loss(
@@ -306,10 +322,11 @@ class FlowMatchingPolicy(BasePolicy):
                 size=(batch_size, 1),
                 fill_value=step * dt,
             )
-            predicted_velocity = self._forward(
+            predicted_velocity = self._predict_velocity(
                 state=state,
                 interpolated_action_chunk=interpolated_action_chunk,
                 tau=tau,
+                generator=generator,
             )
             interpolated_action_chunk = (
                 interpolated_action_chunk + dt * predicted_velocity

@@ -62,6 +62,14 @@ Then, you can download the logs and checkpoints to your local machine using a co
 uv run modal volume get hw1-imitation-volume exp/<experiment_name>
 ```
 
+## Dropout
+
+- `--dropout-p 0.2` enables hidden-activation dropout for MSE and flow policies.
+- Default: `0` (disabled); accepted range: `0 <= p < 1`.
+- RNG-aware layers use the supplied training-loss generator; `.eval()` disables dropout.
+- Checkpoint weight names and format are unchanged. Loading defaults to no dropout;
+  further training applies the new run's `--dropout-p` value.
+
 ## Evaluation episode counts
 
 Use fewer episodes for periodic rollouts while keeping a full final evaluation:
