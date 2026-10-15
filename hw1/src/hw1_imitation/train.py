@@ -97,6 +97,8 @@ class TrainConfig:
     validation_loss_variation: int = 0
     eval_env_variation: int = 0
     eval_policy_variation: int = 0
+    final_eval_variation: int = 0
+    final_eval_policy_variation: int = 0
 
     # Training metrics and experiment tracking.
     log_csv: bool = True
@@ -543,13 +545,11 @@ def run_training(config: TrainConfig) -> None:
                         chunk_size=model.chunk_size,
                         video_size=config.video_size,
                         num_video_episodes=config.num_video_episodes,
-                        num_eval_episodes=(
-                            config.final_eval_episodes
-                            if training_complete
-                            else config.eval_episodes
-                        ),
+                        num_eval_episodes=config.eval_episodes,
                         flow_num_steps=config.flow_num_steps,
                         streams=streams,
+                        env_stream=StreamId.EVAL_ENV,
+                        policy_stream=StreamId.EVAL_POLICY,
                         env_variation=config.eval_env_variation,
                         policy_variation=config.eval_policy_variation,
                         video_dir=video_dir,
@@ -589,6 +589,56 @@ def run_training(config: TrainConfig) -> None:
                         if stop_requested:
                             stop_reason = "plateau"
                     progress.set_description_str("Train")
+
+                final_eval_due = training_complete or stop_requested
+
+                if final_eval_due:
+                    progress.set_description_str("Running Final Evaluation")
+
+                    # Retrieve best model / weights.
+                    # NOTE: we tie break to last step; [nit] double descent.
+                    best_step = max(
+                        checkpoints, key=lambda step: (checkpoints[step].score, step)
+                    )
+                    best_model_record = checkpoints[best_step]
+                    best_model, best_normalizer, inference = load_policy(
+                        path=best_model_record.path, device=device
+                    )
+
+                    video_dir = None
+                    if config.num_video_episodes > 0:
+                        # TODO: confirm that the best_step here is in the same scale as global_step; not epochs.
+                        video_dir = log_dir / "videos" / f"best_step_{best_step:08d}"
+                        video_dir.mkdir(parents=True, exist_ok=False)
+
+                    # call final evaluation using evaluate_policy()
+                    final_eval_result = evaluate_policy(
+                        model=best_model,
+                        normalizer=best_normalizer,
+                        device=device,
+                        chunk_size=best_model.chunk_size,
+                        video_size=config.video_size,
+                        num_video_episodes=config.num_video_episodes,
+                        num_eval_episodes=config.final_eval_episodes,
+                        flow_num_steps=inference["flow_num_steps"],
+                        streams=streams,
+                        env_stream=StreamId.FINAL_EVAL_ENV,
+                        policy_stream=StreamId.FINAL_EVAL_POLICY,
+                        env_variation=config.final_eval_variation,
+                        policy_variation=config.final_eval_policy_variation,
+                        video_dir=video_dir,
+                        show_progress=not progress.disable,
+                        progress_position=1,
+                    )
+
+                    logger.log_final_evaluation(
+                        global_step=global_step,
+                        mean_reward=final_eval_result.mean_reward,
+                        num_episodes=final_eval_result.num_episodes,
+                        checkpoint_step=best_step,
+                        selection_mean_reward=best_model_record.score,
+                        stop_reason=stop_reason,
+                    )
 
                 if stop_requested:
                     break

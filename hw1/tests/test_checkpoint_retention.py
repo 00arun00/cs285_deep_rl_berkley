@@ -77,7 +77,7 @@ class TestCheckpointRetention:
         """Retention preserves best policies and the latest recovery point.
 
         Protects:
-            Earlier ties win and remote aliases follow the retained best and latest
+            Later ties win and remote aliases follow the retained best and latest
             checkpoints.
         Value:
             Catches premature deletion of useful weights as scores improve or
@@ -88,8 +88,9 @@ class TestCheckpointRetention:
         """
         for step, score in enumerate([0.9, 0.8, 0.7, 0.1, 0.7], start=1):
             self.save(step, score)
-        assert set(self.checkpoints) == {1, 2, 3, 5}
-        assert self.local_steps() == {1, 2, 3, 5}
+        assert set(self.checkpoints) == {1, 2, 5}
+        assert self.local_steps() == {1, 2, 5}
+        self.artifacts[3].delete.assert_called_once_with()
         self.artifacts[4].delete.assert_called_once_with()
         assert self.aliases == {"best": 1, "latest": 5}
 
@@ -194,7 +195,7 @@ class TestCheckpointRetention:
         assert set(self.checkpoints) == {3}
         self.artifacts[1].delete.assert_called_once_with()
 
-    @pytest.mark.parametrize("top_k,expected", ((0, {5}), (3, {1, 2, 3, 5})))
+    @pytest.mark.parametrize("top_k,expected", ((0, {5}), (3, {1, 2, 5})))
     def test_local_only_retention_does_not_use_global_wandb_run(self, top_k, expected):
         """Local retention remains independent of ambient W&B state.
 

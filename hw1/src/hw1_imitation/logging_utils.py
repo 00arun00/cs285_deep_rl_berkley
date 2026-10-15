@@ -289,6 +289,14 @@ class ExperimentLogger:
         "num_episodes",
         "video_paths",
     )
+    FINAL_EVAL_FIELDS: tuple[str, ...] = (
+        "global_step",
+        "mean_reward",
+        "num_episodes",
+        "checkpoint_step",
+        "selection_mean_reward",
+        "stop_reason",
+    )
 
     def __init__(
         self,
@@ -317,12 +325,14 @@ class ExperimentLogger:
         self.train_path = self.directory / "train.csv"
         self.eval_path = self.directory / "eval.csv"
         self.validation_path = self.directory / "validation.csv"
+        self.final_eval_path = self.directory / "final_eval.csv"
 
         if self.log_csv:
             for path, fields in (
                 (self.train_path, self.TRAIN_FIELDS),
                 (self.validation_path, self.VALIDATION_FIELDS),
                 (self.eval_path, self.EVAL_FIELDS),
+                (self.final_eval_path, self.FINAL_EVAL_FIELDS),
             ):
                 with path.open("x", encoding="utf-8", newline="") as file:
                     csv.DictWriter(file, fieldnames=fields).writeheader()
@@ -334,6 +344,7 @@ class ExperimentLogger:
             self.run.define_metric("train/*", step_metric="global_step")
             self.run.define_metric("validation/*", step_metric="global_step")
             self.run.define_metric("eval/*", step_metric="global_step")
+            self.run.define_metric("final/*", step_metric="global_step")
 
     def _append_row(
         self,
@@ -423,6 +434,40 @@ class ExperimentLogger:
         )
         self._submit_to_wandb(
             namespace="validation",
+            global_step=global_step,
+            metrics=metrics,
+        )
+
+    def log_final_evaluation(
+        self,
+        *,
+        global_step: int,
+        mean_reward: float,
+        num_episodes: int,
+        checkpoint_step: int,
+        selection_mean_reward: float,
+        stop_reason: str,
+    ) -> None:
+        """Record final evaluation metrics."""
+
+        metrics: dict[str, Scalar] = {
+            "global_step": global_step,
+            "mean_reward": mean_reward,
+            "num_episodes": num_episodes,
+            "checkpoint_step": checkpoint_step,
+            "selection_mean_reward": selection_mean_reward,
+        }
+
+        row = {**metrics, "stop_reason": stop_reason}
+
+        self._append_row(
+            path=self.final_eval_path,
+            fields=self.FINAL_EVAL_FIELDS,
+            row=row,
+        )
+
+        self._submit_to_wandb(
+            namespace="final",
             global_step=global_step,
             metrics=metrics,
         )

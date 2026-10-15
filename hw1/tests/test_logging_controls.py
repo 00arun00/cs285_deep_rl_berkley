@@ -6,10 +6,12 @@ from unittest.mock import patch
 
 import numpy as np
 import pytest
+
 from hw1_imitation import train
 from hw1_imitation.checkpoint import load_policy
 from hw1_imitation.data import Episode, EpisodesDataset
 from hw1_imitation.evaluation import EvaluationResults
+from hw1_imitation.randomness import StreamId
 
 from .summary_helpers import summary_row_numbers, summary_row_value
 
@@ -98,6 +100,8 @@ def test_all_output_combinations(
         num_epochs=1,
         batch_size=8,
         num_video_episodes=0,
+        eval_episodes=2,
+        final_eval_episodes=3,
     )
     real_step = train.train_step
     real_validation = train.compute_validation_loss
@@ -127,6 +131,12 @@ def test_all_output_combinations(
         observed["validation_examples"] = result.examples_count
         return result
 
+    def evaluate_policy(**kwargs):
+        final = kwargs["env_stream"] == StreamId.FINAL_EVAL_ENV
+        return EvaluationResults(
+            0.75 if final else 0.5, kwargs["num_eval_episodes"], ()
+        )
+
     with (
         patch.object(train, "train_step", side_effect=step),
         patch.object(train, "compute_validation_loss", side_effect=validate),
@@ -144,7 +154,7 @@ def test_all_output_combinations(
         patch.object(
             train,
             "evaluate_policy",
-            return_value=EvaluationResults(0.5, 1, ()),
+            side_effect=evaluate_policy,
         ) as evaluate,
     ):
         run = initialize.return_value.__enter__.return_value
@@ -183,7 +193,19 @@ def test_all_output_combinations(
     else:
         assert "Training samples" not in captured.err + captured.out
 
-    evaluate.assert_called_once()
+    expected_evaluations = [(StreamId.EVAL_ENV, StreamId.EVAL_POLICY, 2)]
+    if not fail_after_save:
+        expected_evaluations.append(
+            (StreamId.FINAL_EVAL_ENV, StreamId.FINAL_EVAL_POLICY, 3)
+        )
+    assert [
+        (
+            call.kwargs["env_stream"],
+            call.kwargs["policy_stream"],
+            call.kwargs["num_eval_episodes"],
+        )
+        for call in evaluate.call_args_list
+    ] == expected_evaluations
     train_metrics = {
         "epoch": 0,
         "loss_window_mean": observed["train_loss"],
@@ -194,12 +216,20 @@ def test_all_output_combinations(
         "examples_count": observed["validation_examples"],
     }
     assert observed["validation_examples"] == 2
-    eval_metrics = {"mean_reward": 0.5, "num_episodes": 1}
+    eval_metrics = {"mean_reward": 0.5, "num_episodes": 2}
+    final_metrics = {
+        "mean_reward": 0.75,
+        "num_episodes": 3,
+        "checkpoint_step": 1,
+        "selection_mean_reward": 0.5,
+    }
     expected = {
         "train": train_metrics,
         "validation": validation_metrics,
         "eval": eval_metrics,
     }
+    if not fail_after_save:
+        expected["final"] = final_metrics
     if log_wandb:
         initialize.assert_called_once()
         payloads = [call.args[0] for call in run.log.call_args_list]
@@ -216,17 +246,25 @@ def test_all_output_combinations(
 
     csv_paths = sorted(root.rglob("*.csv"))
     assert {path.name for path in csv_paths} == (
-        {"train.csv", "validation.csv", "eval.csv"} if log_csv else set()
+        {"train.csv", "validation.csv", "eval.csv", "final_eval.csv"}
+        if log_csv
+        else set()
     )
     for path in csv_paths:
         with path.open() as file:
             rows = list(csv.DictReader(file))
+        if path.stem == "final_eval" and fail_after_save:
+            assert rows == []
+            continue
+        namespace = "final" if path.stem == "final_eval" else path.stem
         expected_row = {
             "global_step": "1",
-            **{key: str(value) for key, value in expected[path.stem].items()},
+            **{key: str(value) for key, value in expected[namespace].items()},
         }
         if path.stem == "eval":
             expected_row["video_paths"] = "[]"
+        elif path.stem == "final_eval":
+            expected_row["stop_reason"] = "max_epochs"
         assert rows == [expected_row]
 
     checkpoints = list(root.rglob("*.pt"))
@@ -236,13 +274,13 @@ def test_all_output_combinations(
         load_policy(checkpoints[0])
     else:
         assert list(root.rglob("checkpoints")) == []
+        # Libraries may create unrelated temporary directories during training.
+        checkpoint_dirs = list(isolate_checkpoint_tempdir.glob("hw1-*-checkpoints-*"))
         if fail_after_save:
-            assert list(isolate_checkpoint_tempdir.iterdir()) == [
-                observed["checkpoint"].parent
-            ]
+            assert checkpoint_dirs == [observed["checkpoint"].parent]
             load_policy(observed["checkpoint"])
         else:
-            assert list(isolate_checkpoint_tempdir.iterdir()) == []
+            assert checkpoint_dirs == []
 
     if log_wandb:
         artifact.assert_called_once()

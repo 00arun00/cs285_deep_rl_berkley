@@ -666,7 +666,14 @@ class TestRandomnessIntegration:
                 step % eval_interval == 0 or step == 12 for step in range(1, 13)
             )
             assert validate.call_count == expected_validation_calls
-            assert evaluate.call_count == expected_evaluation_calls
+            assert [
+                (call.kwargs["env_stream"], call.kwargs["policy_stream"])
+                for call in evaluate.call_args_list
+            ] == [
+                (StreamId.EVAL_ENV, StreamId.EVAL_POLICY)
+            ] * expected_evaluation_calls + [
+                (StreamId.FINAL_EVAL_ENV, StreamId.FINAL_EVAL_POLICY)
+            ]
             return losses, weights
 
         root = tmp_path

@@ -105,7 +105,7 @@ def save_checkpoint_and_retain(
     """Save an evaluated policy and retain the best K plus latest.
 
     Call once per evaluation with increasing steps and a fixed top_k.
-    Higher rewards win; ties favor earlier steps. Zero keeps only latest.
+    Higher rewards win; ties favor later steps. Zero keeps only latest.
     A supplied W&B run must be online; omit it for local-only saving.
 
     When uploading, completion is confirmed before pruning. Cleanup failures are
@@ -131,7 +131,7 @@ def save_checkpoint_and_retain(
     scores = {saved_step: record.score for saved_step, record in checkpoints.items()}
     scores[step] = mean_reward
     ranked_steps = sorted(
-        scores, key=lambda saved_step: (-scores[saved_step], saved_step)
+        scores, key=lambda saved_step: (-scores[saved_step], -saved_step)
     )
     keep_steps = set(ranked_steps[:top_k]) | {step}
 
