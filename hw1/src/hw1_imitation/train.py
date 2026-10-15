@@ -62,6 +62,7 @@ class TrainConfig:
     batch_size: int = 128
     lr: float = 3e-4
     weight_decay: float = 0.0
+    dropout_p: float = 0.0  # Hidden-activation dropout during training only.
 
     # Validation and rollout evaluation, measured in training steps.
     validation_interval: int = 100
@@ -150,6 +151,9 @@ class TrainConfig:
             or self.early_stopping_min_delta < 0
         ):
             raise ValueError("early_stopping_min_delta must be finite and nonnegative")
+
+        if not 0.0 <= self.dropout_p < 1.0:
+            raise ValueError("dropout_p must be in [0, 1)")
 
         if self.checkpoint_top_k < 0:
             raise ValueError("checkpoint_top_k must be nonnegative")
@@ -256,6 +260,7 @@ def train_step(
     action_chunk: torch.Tensor,
     *,
     generator: torch.Generator,
+    dropout_p: float = 0.0,
 ) -> torch.Tensor:
     """Run 1 step of training"""
     model.train()
@@ -265,6 +270,7 @@ def train_step(
         state=state,
         action_chunk=action_chunk,
         generator=generator,
+        dropout_p=dropout_p,
     )
 
     loss.backward()
@@ -473,6 +479,7 @@ def run_training(config: TrainConfig) -> None:
                     state=state.to(device),
                     action_chunk=action_chunk.to(device),
                     generator=train_loss_generator,
+                    dropout_p=config.dropout_p,
                 )
                 global_step += 1
 

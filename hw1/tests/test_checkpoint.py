@@ -295,6 +295,7 @@ def test_loaded_policy_starts_a_fresh_training_run(policy_type, tmp_path):
             action_chunk: torch.Tensor,
             *,
             generator: torch.Generator,
+            dropout_p: float = 0.0,
         ) -> torch.Tensor:
             nonlocal steps
             if steps == 0:
@@ -320,6 +321,7 @@ def test_loaded_policy_starts_a_fresh_training_run(policy_type, tmp_path):
                 state,
                 action_chunk,
                 generator=generator,
+                dropout_p=dropout_p,
             )
             assert torch.isfinite(loss).item()
             assert model.training

@@ -62,6 +62,13 @@ Then, you can download the logs and checkpoints to your local machine using a co
 uv run modal volume get hw1-imitation-volume exp/<experiment_name>
 ```
 
+## Dropout
+
+- `--dropout-p 0.2` drops hidden activations during training for MSE and flow policies.
+- Default: `0` (disabled); accepted range: `0 <= p < 1`.
+- Uses the training-loss random stream; validation and rollout inference disable dropout.
+- Applies to fresh and loaded policies without changing checkpoint format.
+
 ## Evaluation episode counts
 
 Use fewer episodes for periodic rollouts while keeping a full final evaluation:

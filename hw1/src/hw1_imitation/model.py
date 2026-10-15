@@ -12,6 +12,34 @@ from torch import nn
 PolicyType: TypeAlias = Literal["mse", "flow"]
 
 
+def functional_dropout(
+    x: torch.Tensor,
+    *,
+    dropout_p: float,
+    generator: torch.Generator,
+) -> torch.Tensor:
+    """Drop out elements with inverted scaling, drawing from a caller-owned
+    generator.
+
+    Matches nn.functional.dropout semantics, but the mask comes from the
+    supplied generator instead of the global RNG state. The generator must
+    match the device of x.
+    """
+    if not 0.0 <= dropout_p < 1.0:
+        raise ValueError(f"dropout_p must be in [0, 1); got {dropout_p}")
+
+    keep = (
+        torch.rand(
+            size=x.shape,
+            device=x.device,
+            dtype=x.dtype,
+            generator=generator,
+        )
+        >= dropout_p
+    )
+    return x * keep / (1.0 - dropout_p)
+
+
 @dataclass(frozen=True)
 class PolicyConfig:
     """Architecture needed to reconstruct a policy.
@@ -53,11 +81,16 @@ class BasePolicy(nn.Module, metaclass=abc.ABCMeta):
         action_chunk: torch.Tensor,
         *,
         generator: torch.Generator,
+        dropout_p: float = 0.0,
     ) -> torch.Tensor:
         """Compute loss using caller-owned randomness.
 
         Stochastic policies advance generator. Deterministic policies leave
         it untouched. The generator must match the sampling device.
+
+        dropout_p applies generator-driven dropout to hidden activations in
+        training mode only; model.eval() disables it and draws nothing, and
+        0.0 always disables it.
         """
 
     @abc.abstractmethod
@@ -111,6 +144,38 @@ class SimpleMLP(nn.Sequential):
 
         super().__init__(*layers)
 
+    def forward_with_dropout(
+        self,
+        x: torch.Tensor,
+        *,
+        dropout_p: float,
+        generator: torch.Generator,
+    ) -> torch.Tensor:
+        """Forward pass applying dropout after every hidden activation.
+
+        The output layer never receives dropout. Dropout applies only while
+        the module is in training mode: eval() disables it and draws nothing,
+        matching nn.Dropout conventions. With dropout_p = 0 or in eval mode
+        this reduces to plain forward() and draws nothing from the generator.
+        The generator must match the device of x.
+        """
+        if not 0.0 <= dropout_p < 1.0:
+            raise ValueError(f"dropout_p must be in [0, 1); got {dropout_p}")
+
+        if dropout_p == 0.0 or not self.training:
+            return self(x)
+
+        layers = list(self)
+        for layer in layers[:-1]:
+            x = layer(x)
+            if isinstance(layer, nn.ReLU):
+                x = functional_dropout(
+                    x,
+                    dropout_p=dropout_p,
+                    generator=generator,
+                )
+        return layers[-1](x)
+
     def reset_parameters(
         self,
         *,
@@ -163,11 +228,17 @@ class MSEPolicy(BasePolicy):
         state: torch.Tensor,
         action_chunk: torch.Tensor,
         *,
-        generator: torch.Generator,  # model is deterministic, generator not used.
+        generator: torch.Generator,  # advances only in training with dropout_p > 0.
+        dropout_p: float = 0.0,
     ) -> torch.Tensor:
         target = action_chunk.flatten(start_dim=1)
+        prediction = self.model.forward_with_dropout(
+            x=state,
+            dropout_p=dropout_p,
+            generator=generator,
+        )
         return nn.functional.mse_loss(
-            input=self.model(state),
+            input=prediction,
             target=target,
         )
 
@@ -213,11 +284,24 @@ class FlowMatchingPolicy(BasePolicy):
         state: torch.Tensor,
         interpolated_action_chunk: torch.Tensor,
         tau: torch.Tensor,
+        *,
+        dropout_p: float = 0.0,
+        generator: torch.Generator | None = None,
     ) -> torch.Tensor:
         model_input = torch.concat(
             tensors=(state, interpolated_action_chunk, tau),
             dim=1,
         )
+        if dropout_p > 0.0 and self.training:
+            if generator is None:
+                raise ValueError(
+                    "dropout_p > 0 requires a generator on the sampling device"
+                )
+            return self.model.forward_with_dropout(
+                x=model_input,
+                dropout_p=dropout_p,
+                generator=generator,
+            )
         return self.model(model_input)
 
     def compute_loss(
@@ -226,6 +310,7 @@ class FlowMatchingPolicy(BasePolicy):
         action_chunk: torch.Tensor,
         *,
         generator: torch.Generator,
+        dropout_p: float = 0.0,
     ) -> torch.Tensor:
         # Shape: (batch, chunk_size * action_dim).
         flat_action_chunk = action_chunk.flatten(start_dim=1)
@@ -257,6 +342,8 @@ class FlowMatchingPolicy(BasePolicy):
             state=state,
             interpolated_action_chunk=interpolated_action_chunk,
             tau=tau_sample,
+            dropout_p=dropout_p,
+            generator=generator,
         )
 
         return nn.functional.mse_loss(
