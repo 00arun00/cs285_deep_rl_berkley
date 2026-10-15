@@ -239,6 +239,8 @@ def evaluate_policy(
     flow_num_steps: int,
     *,
     streams: RandomStreamFactory,
+    env_stream: StreamId = StreamId.EVAL_ENV,
+    policy_stream: StreamId = StreamId.EVAL_POLICY,
     env_variation: int = 0,
     policy_variation: int = 0,
     video_dir: Path | None = None,
@@ -251,8 +253,8 @@ def evaluate_policy(
     The score is the mean of per-episode maximum rewards.
 
     Each episode index identifies an environment seed and a separate policy
-    generator. Repeated calls with the same root and variations recreate
-    those episode identities.
+    generator. Repeated calls with the same root, stream IDs, and variations
+    recreate those episode identities.
 
     The policy generator advances across action chunks within its episode.
     Environment and policy variations can be changed independently.
@@ -274,6 +276,8 @@ def evaluate_policy(
             evaluation episode count. Use zero to disable recording.
         flow_num_steps: Sampling steps for flow policies.
         streams: Stateless factory supplying indexed episode randomness.
+        env_stream: Random stream identity for environment initialization.
+        policy_stream: Random stream identity for policy sampling.
         env_variation: Realization of evaluation environment randomness.
         policy_variation: Realization of evaluation policy randomness.
         video_dir: Existing directory required when recording videos.
@@ -342,13 +346,13 @@ def evaluate_policy(
         for episode_index in range(num_eval_episodes):
             # Give each episode separately indexed environment and policy streams.
             env_seed = streams.seed(
-                StreamId.EVAL_ENV,
+                stream=env_stream,
                 variation=env_variation,
                 index=episode_index,
             )
 
             policy_generator = streams.torch(
-                StreamId.EVAL_POLICY,
+                stream=policy_stream,
                 variation=policy_variation,
                 index=episode_index,
                 device=device,
