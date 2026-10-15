@@ -36,14 +36,20 @@ class StreamId(IntEnum):
 
     DATA_SPLIT = 1  # Choose train/validation episode membership
     MODEL_INIT = 2  # Initialize model weights
+
     TRAIN_LOADER = 3  # Shuffle training samples and isolate loader randomness
     VALIDATION_LOADER = 4  # Isolate validation-loader randomness
+
     TRAIN_LOSS = 5
     VALIDATION_LOSS = 6
+
     EVAL_ENV = 7
     EVAL_POLICY = 8
 
-    # NEXT_ID = 9
+    FINAL_EVAL_ENV = 9
+    FINAL_EVAL_POLICY = 10
+
+    # NEXT_ID = 11
 
 
 @dataclass(frozen=True, slots=True)
