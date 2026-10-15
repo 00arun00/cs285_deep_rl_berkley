@@ -135,6 +135,7 @@ def build_training_summary(
         "Optimizer",
         f"AdamW · lr {config.lr:g} · weight decay {config.weight_decay:g}",
     )
+    table.add_row("Dropout", f"{config.dropout_p:g} · training only")
     table.add_row(
         "Training budget",
         f"{config.num_epochs:,} epochs · {config.num_epochs * steps_per_epoch:,} optimizer steps",

@@ -16,7 +16,7 @@ import torch
 from hw1_imitation import evaluation, train
 from hw1_imitation.checkpoint import load_policy, save_policy
 from hw1_imitation.data import Episode, EpisodesDataset, Normalizer
-from hw1_imitation.model import BasePolicy, PolicyConfig, SimpleMLP, build_policy
+from hw1_imitation.model import BasePolicy, PolicyConfig, MLP, build_policy
 from hw1_imitation.randomness import RandomStreamFactory, StreamId
 from hypothesis import example, given
 from hypothesis import strategies as st
@@ -406,13 +406,13 @@ class TestPolicyInitialization:
         generator = RandomStreamFactory(42).torch(StreamId.MODEL_INIT)
         generator_before = generator.get_state().clone()
         global_before = torch.get_rng_state().clone()
-        real_reset = SimpleMLP.reset_parameters
+        real_reset = MLP.reset_parameters
 
         def fail_after_initialization(model, *, generator):
             real_reset(model, generator=generator)
             raise RuntimeError("injected initialization failure")
 
-        with patch.object(SimpleMLP, "reset_parameters", fail_after_initialization):
+        with patch.object(MLP, "reset_parameters", fail_after_initialization):
             with pytest.raises(RuntimeError, match="injected initialization failure"):
                 build_policy(
                     PolicyConfig(policy_type, 3, 2, 1, (4,)), cpu_generator=generator

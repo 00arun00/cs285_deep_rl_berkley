@@ -183,7 +183,7 @@ def test_flow_integration_matches_constant_velocity_solution(
     """
     policy = zero_policy("flow", horizon=horizon, action_dim=action_dim)
     # With no hidden layers and all weights zero, the sole bias is the constant
-    # output velocity. Configure real parameters rather than replacing _forward.
+    # output velocity. Configure real parameters rather than replacing _predict_velocity.
     velocity = torch.zeros(horizon * action_dim)
     if field == "constant":
         velocity = torch.arange(horizon * action_dim, dtype=torch.float32) * 0.75 - 0.5

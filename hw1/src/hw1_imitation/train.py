@@ -62,6 +62,7 @@ class TrainConfig:
     batch_size: int = 128
     lr: float = 3e-4
     weight_decay: float = 0.0
+    dropout_p: float = 0.0  # Hidden-activation dropout during training only.
 
     # Validation and rollout evaluation, measured in training steps.
     validation_interval: int = 100
@@ -150,6 +151,9 @@ class TrainConfig:
             or self.early_stopping_min_delta < 0
         ):
             raise ValueError("early_stopping_min_delta must be finite and nonnegative")
+
+        if not 0.0 <= self.dropout_p < 1.0:
+            raise ValueError("dropout_p must be in [0, 1)")
 
         if self.checkpoint_top_k < 0:
             raise ValueError("checkpoint_top_k must be nonnegative")
@@ -319,6 +323,7 @@ def run_training(config: TrainConfig) -> None:
             device=device,
         )
 
+    model.set_dropout_p(config.dropout_p)
     device = next(model.parameters()).device
 
     # Create fresh for each training run; advance across its batches and epochs.
