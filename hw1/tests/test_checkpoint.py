@@ -326,6 +326,8 @@ def test_loaded_policy_starts_a_fresh_training_run(policy_type, tmp_path):
             steps += 1
             return loss
 
+        real_save = train.save_checkpoint_and_retain
+
         def save(
             model,
             step,
@@ -340,8 +342,19 @@ def test_loaded_policy_starts_a_fresh_training_run(policy_type, tmp_path):
         ):
             assert mean_reward == 0.5
             assert top_k == config.checkpoint_top_k
-            save_policy(target, model, normalizer, flow_num_steps=flow_num_steps)
-            return set()
+            pending = real_save(
+                model=model,
+                step=step,
+                checkpoint_dir=checkpoint_dir,
+                run=None,
+                normalizer=normalizer,
+                flow_num_steps=flow_num_steps,
+                mean_reward=mean_reward,
+                top_k=top_k,
+                checkpoints=checkpoints,
+            )
+            target.write_bytes(checkpoints[step].path.read_bytes())
+            return pending
 
         with (
             patch.object(train, "LOGDIR_PREFIX", str(root / name)),
@@ -369,7 +382,13 @@ def test_loaded_policy_starts_a_fresh_training_run(policy_type, tmp_path):
         # Four training episodes, each containing six padded samples.
         expected_steps = config.num_epochs * (24 // config.batch_size)
         assert steps == expected_steps
-        assert evaluate.call_count == 1
+        assert [
+            (call.kwargs["env_stream"], call.kwargs["policy_stream"])
+            for call in evaluate.call_args_list
+        ] == [
+            (StreamId.EVAL_ENV, StreamId.EVAL_POLICY),
+            (StreamId.FINAL_EVAL_ENV, StreamId.FINAL_EVAL_POLICY),
+        ]
         assert save_artifact.call_count == 1
         assert save_artifact.call_args.kwargs["step"] == expected_steps
         restored, normalizer, inference = load_policy(target)

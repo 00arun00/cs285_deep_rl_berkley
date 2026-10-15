@@ -70,10 +70,14 @@ Use fewer episodes for periodic rollouts while keeping a full final evaluation:
 uv run src/hw1_imitation/train.py --eval-episodes 5 --final-eval-episodes 100
 ```
 
-Both counts must be positive and default to 100. If a periodic evaluation lands
-on the final training step, only the final evaluation runs, using
-`--final-eval-episodes`. Evaluation intervals, video recording, and checkpoint
-schedules are unchanged. Video count is capped by the rollout episode count.
+| Evaluation | Episode budget | Policy |
+| --- | --- | --- |
+| Periodic and last training step | `--eval-episodes` | Current policy; used for checkpoint selection |
+| After completion or early stopping | `--final-eval-episodes` | Best retained checkpoint; separate random streams |
+
+Both budgets default to 100 and must be positive. Final scores do not affect
+checkpoint selection. Results go to `final_eval.csv` when CSV logging is enabled
+and `final/*` metrics when W&B is enabled.
 
 ## Reusing policy checkpoints
 
@@ -88,15 +92,15 @@ uv run src/hw1_imitation/train.py --no-log-csv --no-log-wandb --no-save-checkpoi
 W&B initialization, metrics, video uploads, and checkpoint artifacts.
 `--no-save-checkpoints` saves checkpoints in a unique temporary directory per
 run instead of the experiment directory. W&B uploads and retention still apply.
-Temporary directories are not automatically removed after training.
+Temporary checkpoint directories are deleted on success and retained on failure.
 Progress, warnings, validation, and rollout evaluation remain enabled. Videos
 are still recorded unless `--num-video-episodes 0` is supplied. The run directory
 is still created with all three flags supplied.
 
-Each rollout evaluation (including the final training step) saves a checkpoint.
+Each selection evaluation (including the last training step) saves a checkpoint.
 By default, its path is `exp/<experiment_name>/checkpoints/policy_step_<step>.pt`.
 `--checkpoint-top-k` (default: 3) retains the best K by rollout mean reward plus
-latest. Ties favor earlier checkpoints; zero keeps only latest. This applies to
+latest. Ties favor later checkpoints; zero keeps only latest. This applies to
 both persistent and temporary storage.
 
 With W&B enabled, checkpoints are also uploaded as model artifacts, with `best`

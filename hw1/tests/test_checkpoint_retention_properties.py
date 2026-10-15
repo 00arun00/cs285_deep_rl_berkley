@@ -15,12 +15,12 @@ from hypothesis import strategies as st
 
 
 def expected_retention(history, top_k, latest):
-    """Rank by counting better predecessors, independently of production sorting."""
+    """Rank by counting better records, independently of production sorting."""
     best = {
         step
         for step, score in history.items()
         if sum(
-            other_score > score or (other_score == score and other_step < step)
+            other_score > score or (other_score == score and other_step > step)
             for other_step, other_score in history.items()
         )
         < top_k
@@ -97,8 +97,11 @@ def save(policy, stats, root, records, step, score, top_k, run):
 def assert_aliases(service, history, top_k, latest):
     expected = {"latest": latest}
     if top_k:
-        # max keeps the first (earliest) item on a tie in insertion-ordered history.
-        expected["best"] = max(history, key=history.get)
+        # Among checkpoints with the highest score, the latest step wins.
+        best_score = max(history.values())
+        expected["best"] = max(
+            step for step, score in history.items() if score == best_score
+        )
     assert service.aliases == expected
 
 

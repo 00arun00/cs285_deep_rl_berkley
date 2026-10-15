@@ -7,27 +7,28 @@ import pytest
 from hw1_imitation import train
 from hw1_imitation.data import Episode, EpisodesDataset
 from hw1_imitation.evaluation import EvaluationResults
+from hw1_imitation.randomness import StreamId
 
 
 class TestEvaluationBudget:
     @pytest.mark.parametrize(
         "batch_size,interval,expected",
         [
-            (4, 2, [(2, 5), (4, 5), (6, 50)]),
-            (4, 4, [(4, 5), (6, 50)]),
-            (4, 10, [(6, 50)]),
-            (24, 1, [(1, 50)]),
+            (4, 2, [(2, 5), (4, 5), (6, 5), (6, 50)]),
+            (4, 4, [(4, 5), (6, 5), (6, 50)]),
+            (4, 10, [(6, 5), (6, 50)]),
+            (24, 1, [(1, 5), (1, 50)]),
         ],
         ids=["aligned-final", "unaligned-final", "short-run", "one-step"],
     )
-    def test_final_step_uses_final_budget_exactly_once(
+    def test_selection_and_final_evaluation_use_separate_budgets(
         self, tmp_path, batch_size, interval, expected
     ):
         """Training uses the final rollout budget once at completion.
 
         Protects:
-            Periodic evaluations cannot duplicate or replace the final evaluation on
-            aligned steps.
+            The last selection evaluation keeps its budget and is followed by
+            exactly one final evaluation on separate streams.
         Value:
             Avoids wasted rollouts and under-budget final scores for short or
             unaligned training runs.
@@ -62,6 +63,7 @@ class TestEvaluationBudget:
         )
         steps = 0
         evaluations = []
+        stream_pairs = []
         real_step = train.train_step
 
         def step(*args, **kwargs):
@@ -72,6 +74,7 @@ class TestEvaluationBudget:
 
         def evaluate(**kwargs):
             evaluations.append((steps, kwargs["num_eval_episodes"]))
+            stream_pairs.append((kwargs["env_stream"], kwargs["policy_stream"]))
             return EvaluationResults(0.5, kwargs["num_eval_episodes"], ())
 
         root = tmp_path
@@ -92,3 +95,6 @@ class TestEvaluationBudget:
             train.run_training(config)
 
         assert evaluations == expected
+        assert stream_pairs == [(StreamId.EVAL_ENV, StreamId.EVAL_POLICY)] * (
+            len(expected) - 1
+        ) + [(StreamId.FINAL_EVAL_ENV, StreamId.FINAL_EVAL_POLICY)]

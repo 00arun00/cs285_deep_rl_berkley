@@ -103,8 +103,14 @@ def test_training_logs_actual_loss_windows(
 def test_training_warns_about_pending_checkpoint_cleanup(run_training, caplog, pending):
     """Makes leftover checkpoints visible at shutdown without warning after successful
     cleanup."""
+    real_save = train.save_checkpoint_and_retain
+
+    def save(**kwargs):
+        real_save(**kwargs)
+        return pending
+
     with (
-        patch.object(train, "save_checkpoint_and_retain", return_value=pending),
+        patch.object(train, "save_checkpoint_and_retain", side_effect=save),
         caplog.at_level(logging.WARNING),
     ):
         run_training(config(num_epochs=1, batch_size=24, save_checkpoints=True))
