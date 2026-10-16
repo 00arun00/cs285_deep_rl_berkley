@@ -79,7 +79,7 @@ class TestEvaluationBudget:
 
         root = tmp_path
         with (
-            patch.object(train, "LOGDIR_PREFIX", str(root)),
+            patch.object(train, "LOG_ROOT", str(root)),
             patch.object(train, "download_pusht", return_value=root),
             patch.object(train, "load_episodes_dataset", return_value=episodes),
             patch.object(

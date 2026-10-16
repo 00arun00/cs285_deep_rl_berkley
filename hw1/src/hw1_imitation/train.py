@@ -39,7 +39,7 @@ from hw1_imitation.logging_utils import ExperimentLogger, build_training_summary
 from hw1_imitation.model import BasePolicy, PolicyConfig, PolicyType, build_policy
 from hw1_imitation.randomness import RandomStreamFactory, StreamId
 
-LOGDIR_PREFIX = "exp"
+LOG_ROOT = "exp"
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,7 +97,7 @@ class TrainConfig:
     validation_loss_variation: int = 0
     eval_env_variation: int = 0
     eval_policy_variation: int = 0
-    final_eval_variation: int = 0
+    final_eval_env_variation: int = 0
     final_eval_policy_variation: int = 0
 
     # Training metrics and experiment tracking.
@@ -361,7 +361,7 @@ def run_training(config: TrainConfig) -> None:
         exp_name += f"_{config.exp_name}"
 
     # The training driver owns the directory and all output lifetimes.
-    log_dir = Path(LOGDIR_PREFIX) / exp_name
+    log_dir = Path(LOG_ROOT) / exp_name
     log_dir.mkdir(parents=True, exist_ok=False)
 
     total_steps = config.num_epochs * len(train_loader)
@@ -624,7 +624,7 @@ def run_training(config: TrainConfig) -> None:
                         streams=streams,
                         env_stream=StreamId.FINAL_EVAL_ENV,
                         policy_stream=StreamId.FINAL_EVAL_POLICY,
-                        env_variation=config.final_eval_variation,
+                        env_variation=config.final_eval_env_variation,
                         policy_variation=config.final_eval_policy_variation,
                         video_dir=video_dir,
                         show_progress=not progress.disable,
