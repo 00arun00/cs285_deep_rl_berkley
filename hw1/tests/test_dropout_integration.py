@@ -9,11 +9,15 @@ import torch
 from torch import nn
 
 from hw1_imitation import evaluation, train
-from hw1_imitation.checkpoint import get_dropout_config, load_policy, save_policy
+from hw1_imitation.checkpoint import load_policy, save_policy
 from hw1_imitation.data import Episode, EpisodesDataset
 from hw1_imitation.model import PolicyConfig, MLP, build_policy
 from hw1_imitation.randomness import RandomStreamFactory, StreamId
-from hw1_imitation.rng_modules import DropoutWithExplicitRNG, override_dropout_p
+from hw1_imitation.rng_modules import (
+    DropoutWithExplicitRNG,
+    get_dropout_config,
+    override_dropout_p,
+)
 from tests.test_randomness import TinyEnv, make_normalizer
 
 
