@@ -25,6 +25,7 @@ from rich.table import Table
 from rich.text import Text
 
 import wandb
+from hw1_imitation.checkpoint import get_dropout_config
 
 if TYPE_CHECKING:
     from hw1_imitation.model import BasePolicy
@@ -135,7 +136,18 @@ def build_training_summary(
         "Optimizer",
         f"AdamW · lr {config.lr:g} · weight decay {config.weight_decay:g}",
     )
-    table.add_row("Dropout", f"{config.dropout_p:g} · training only")
+    dropout = get_dropout_config(model)
+    probabilities = set(dropout.values())
+    if not dropout:
+        dropout_description = "No dropout layers"
+    elif len(probabilities) == 1:
+        dropout_description = f"{next(iter(probabilities)):g} · training only"
+    else:
+        dropout_description = " · ".join(
+            f"{name}: {p:g}" for name, p in dropout.items()
+        )
+        dropout_description += " · training only"
+    table.add_row("Dropout", Text(dropout_description))
     table.add_row(
         "Training budget",
         f"{config.num_epochs:,} epochs · {config.num_epochs * steps_per_epoch:,} optimizer steps",

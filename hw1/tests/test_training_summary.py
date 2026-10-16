@@ -153,3 +153,19 @@ class TestTrainingSummary:
             )
 
         assert content(wide) == content(narrow)
+
+    def test_dropout_summary_reports_actual_layer_settings(self):
+        summary = self.summary(config=TrainConfig(dropout_p=None))
+        model = summary["model"]
+        assert "0 · training only" in summary_row_value(self.render(summary), "Dropout")
+        model.model.dropout_0.p = 0.1
+        model.model.dropout_1.p = 0.3
+        model.model.dropout_2.p = 0.0
+        rendered = self.render(summary, width=180)
+        dropout = summary_row_value(rendered, "Dropout")
+        for setting in (
+            "model.dropout_0: 0.1",
+            "model.dropout_1: 0.3",
+            "model.dropout_2: 0",
+        ):
+            assert setting in dropout
