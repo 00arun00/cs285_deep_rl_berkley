@@ -357,7 +357,7 @@ def test_loaded_policy_starts_a_fresh_training_run(policy_type, tmp_path):
             return pending
 
         with (
-            patch.object(train, "LOGDIR_PREFIX", str(root / name)),
+            patch.object(train, "LOG_ROOT", str(root / name)),
             patch.object(train, "download_pusht", return_value=root),
             patch.object(train, "load_episodes_dataset", return_value=episodes),
             patch.object(

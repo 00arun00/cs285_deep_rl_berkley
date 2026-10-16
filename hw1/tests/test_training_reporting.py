@@ -26,7 +26,7 @@ def run_training(tmp_path):
 
     def run(config):
         with (
-            patch.object(train, "LOGDIR_PREFIX", str(tmp_path)),
+            patch.object(train, "LOG_ROOT", str(tmp_path)),
             patch.object(train, "download_pusht", return_value=tmp_path),
             patch.object(train, "load_episodes_dataset", return_value=episodes),
             patch.object(

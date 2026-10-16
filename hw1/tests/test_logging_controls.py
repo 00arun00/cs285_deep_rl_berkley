@@ -141,7 +141,7 @@ def test_all_output_combinations(
         patch.object(train, "train_step", side_effect=step),
         patch.object(train, "compute_validation_loss", side_effect=validate),
         patch.object(train, "save_checkpoint_and_retain", side_effect=save),
-        patch.object(train, "LOGDIR_PREFIX", str(root)),
+        patch.object(train, "LOG_ROOT", str(root)),
         patch.object(train, "download_pusht", return_value=root),
         patch.object(train, "load_episodes_dataset", return_value=episodes),
         patch.object(
