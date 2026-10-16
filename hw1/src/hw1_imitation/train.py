@@ -20,7 +20,7 @@ from torch.utils.data import DataLoader, Dataset, random_split
 from tqdm import tqdm
 
 import wandb
-from hw1_imitation.checkpoint import load_policy
+from hw1_imitation.checkpoint import get_dropout_config, load_policy
 from hw1_imitation.data import (
     Episode,
     EpisodeChunkDataset,
@@ -38,6 +38,7 @@ from hw1_imitation.evaluation import (
 from hw1_imitation.logging_utils import ExperimentLogger, build_training_summary
 from hw1_imitation.model import BasePolicy, PolicyConfig, PolicyType, build_policy
 from hw1_imitation.randomness import RandomStreamFactory, StreamId
+from hw1_imitation.rng_modules import override_dropout_p
 
 LOG_ROOT = "exp"
 
@@ -62,7 +63,8 @@ class TrainConfig:
     batch_size: int = 128
     lr: float = 3e-4
     weight_decay: float = 0.0
-    dropout_p: float = 0.0  # Hidden-activation dropout during training only.
+    # None inherits loaded dropout; fresh models use zero.
+    dropout_p: float | None = None
 
     # Validation and rollout evaluation, measured in training steps.
     validation_interval: int = 100
@@ -152,7 +154,7 @@ class TrainConfig:
         ):
             raise ValueError("early_stopping_min_delta must be finite and nonnegative")
 
-        if not 0.0 <= self.dropout_p < 1.0:
+        if self.dropout_p is not None and not 0.0 <= self.dropout_p < 1.0:
             raise ValueError("dropout_p must be in [0, 1)")
 
         if self.checkpoint_top_k < 0:
@@ -323,7 +325,8 @@ def run_training(config: TrainConfig) -> None:
             device=device,
         )
 
-    model.set_dropout_p(config.dropout_p)
+    if config.dropout_p is not None:
+        override_dropout_p(model, config.dropout_p)
     device = next(model.parameters()).device
 
     # Create fresh for each training run; advance across its batches and epochs.
@@ -394,6 +397,7 @@ def run_training(config: TrainConfig) -> None:
 
     wandb_run_config = config_to_dict(config)
     wandb_run_config["model_config"] = asdict(model.config)
+    wandb_run_config["training_config"] = {"dropout": get_dropout_config(model)}
 
     with ExitStack() as stack:
         # Checkpoint Directory management.

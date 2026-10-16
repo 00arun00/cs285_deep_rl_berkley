@@ -78,14 +78,6 @@ class BasePolicy(nn.Module, metaclass=abc.ABCMeta):
         num_steps controls flow integration; MSE policies ignore it.
         """
 
-    def set_dropout_p(self, p: float) -> None:
-        """Set training dropout on fresh or loaded policies; not checkpoint state."""
-        if not 0.0 <= p < 1.0:
-            raise ValueError("dropout probability must be in [0, 1)")
-        for module in self.modules():
-            if isinstance(module, DropoutWithExplicitRNG):
-                module.p = p
-
     @property
     def state_dim(self) -> int:
         return self.config.state_dim
@@ -113,8 +105,8 @@ class MLP(SequentialWithExplicitRNG):
         if any(dim <= 0 for dim in dims):
             raise ValueError(f"All MLP dimensions must be positive; got {dims}")
 
-        # Preserve the numeric names of existing parameterized layers so v1
-        # checkpoints remain compatible. Dropout has no parameters or buffers.
+        # Keep weight names independent of dropout placement.
+        # Dropout has no parameters or buffers.
         layers: OrderedDict[str, nn.Module] = OrderedDict()
         for index, (input_size, output_size) in enumerate(zip(dims, dims[1:])):
             layers[str(2 * index)] = nn.Linear(input_size, output_size)

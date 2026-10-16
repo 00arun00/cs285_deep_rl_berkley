@@ -65,10 +65,12 @@ uv run modal volume get hw1-imitation-volume exp/<experiment_name>
 ## Dropout
 
 - `--dropout-p 0.2` enables hidden-activation dropout for MSE and flow policies.
-- Default: `0` (disabled); accepted range: `0 <= p < 1`.
+- When omitted, fresh models use `0` and loaded models retain their saved per-layer probabilities.
+  An explicit value (including `0`) overrides every dropout layer; accepted range: `0 <= p < 1`.
 - RNG-aware layers use the supplied training-loss generator; `.eval()` disables dropout.
-- Checkpoint weight names and format are unchanged. Loading defaults to no dropout;
-  further training applies the new run's `--dropout-p` value.
+- Checkpoints save `training_config.dropout`, mapping module names to probabilities.
+  Loading requires matching dropout layer names and restores each value in evaluation
+  mode.
 
 ## Evaluation episode counts
 
@@ -123,6 +125,7 @@ The policy checkpoint format (version 1) contains:
 
 - Model architecture, including the prediction horizon (`chunk_size`).
 - Learned weights, saved as CPU tensors.
+- Per-layer training configuration (`training_config.dropout`), restored on load.
 - Observation and action normalization statistics.
 - Default flow inference settings (`flow_num_steps`).
 
@@ -174,7 +177,8 @@ uv run src/hw1_imitation/train.py --init-from /path/to/policy_step_12000.pt --nu
 
 This trains for **20 additional epochs** with a fresh optimizer, seed, counters,
 and logging run. Training and evaluation settings come from the new invocation's
-flags and defaults; the previous training configuration is not inherited.
+flags and defaults, except dropout probabilities: each layer inherits its checkpoint value
+unless `--dropout-p` uniformly overrides them. Use `--dropout-p 0` to disable saved dropout.
 In particular, evaluations use the new run's `--flow-num-steps` value.
 
 The loaded policy supplies its architecture and normalizer. `--policy-type`,

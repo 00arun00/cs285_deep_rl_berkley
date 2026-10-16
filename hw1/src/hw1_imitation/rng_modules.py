@@ -68,3 +68,12 @@ class DropoutWithExplicitRNG(ModuleWithExplicitRNG):
 
     def extra_repr(self) -> str:
         return f"p={self.p}"
+
+
+def override_dropout_p(model: nn.Module, p: float) -> None:
+    """Explicitly override every dropout layer with one probability."""
+    if not 0.0 <= p < 1.0:
+        raise ValueError("dropout probability must be in [0, 1)")
+    for module in model.modules():
+        if isinstance(module, DropoutWithExplicitRNG):
+            module.p = p

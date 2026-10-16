@@ -3,11 +3,12 @@
 A policy checkpoint contains:
 - Architecture configuration.
 - Learned model weights.
+- Training configuration (currently dropout probability).
 - Observation and action normalization statistics.
 - Default inference settings.
 
 Loading does not restore a training session. Further training uses a
-new optimizer, training configuration, seed, and logging run.
+new optimizer, seed, and logging run; saved dropout can be overridden.
 """
 
 from __future__ import annotations
@@ -19,8 +20,34 @@ import torch
 
 from hw1_imitation.data import Normalizer
 from hw1_imitation.model import BasePolicy, PolicyConfig, construct_policy
+from hw1_imitation.rng_modules import DropoutWithExplicitRNG
 
 CHECKPOINT_VERSION = 1
+
+
+def get_dropout_config(model: torch.nn.Module) -> dict[str, float]:
+    """Snapshot each dropout layer's probability under its module name."""
+    return {
+        name: module.p
+        for name, module in model.named_modules()
+        if isinstance(module, DropoutWithExplicitRNG)
+    }
+
+
+def _restore_dropout_config(model: torch.nn.Module, config: dict[str, float]) -> None:
+    """Restore probabilities only when the saved and current layer names match."""
+    layers = {
+        name: module
+        for name, module in model.named_modules()
+        if isinstance(module, DropoutWithExplicitRNG)
+    }
+    if not isinstance(config, dict) or config.keys() != layers.keys():
+        raise ValueError("Checkpoint dropout layer names do not match the model")
+    for p in config.values():
+        if not isinstance(p, (int, float)) or not 0.0 <= p < 1.0:
+            raise ValueError("Checkpoint dropout probability must be in [0, 1)")
+    for name, p in config.items():
+        layers[name].p = p
 
 
 def save_policy(
@@ -64,6 +91,7 @@ def save_policy(
         "model_state_dict": {
             name: tensor.detach().cpu() for name, tensor in model.state_dict().items()
         },
+        "training_config": {"dropout": get_dropout_config(model)},
         "normalizer": normalizer.state_dict(),
         "inference_config": {
             "flow_num_steps": flow_num_steps,
@@ -103,7 +131,9 @@ def load_policy(
     Inference randomness remains caller-owned and is supplied when sampling
     actions.
 
-    For further training, construct a new optimizer and call model.train().
+    Per-layer dropout probabilities are restored from the required training
+    configuration. For further training, construct a new optimizer and call
+    model.train(); override_dropout_p(model, p) can explicitly replace all values.
     No optimizer state, training position, or saved RNG state is restored.
     """
     checkpoint = torch.load(
@@ -140,6 +170,8 @@ def load_policy(
 
     model.to_empty(device="cpu")
     model.load_state_dict(checkpoint["model_state_dict"], strict=True)
+
+    _restore_dropout_config(model, checkpoint["training_config"]["dropout"])
 
     model = model.to(device=device)
     model.eval()
