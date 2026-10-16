@@ -25,7 +25,7 @@ from rich.table import Table
 from rich.text import Text
 
 import wandb
-from hw1_imitation.checkpoint import get_dropout_config
+from hw1_imitation.rng_modules import get_dropout_config
 
 if TYPE_CHECKING:
     from hw1_imitation.model import BasePolicy

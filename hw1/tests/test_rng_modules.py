@@ -4,7 +4,13 @@ import pytest
 import torch
 from torch import nn
 
-from hw1_imitation.rng_modules import ModuleWithExplicitRNG, SequentialWithExplicitRNG
+from hw1_imitation.rng_modules import (
+    DropoutWithExplicitRNG,
+    ModuleWithExplicitRNG,
+    SequentialWithExplicitRNG,
+    get_dropout_config,
+    restore_dropout_config,
+)
 
 
 class RandomOffset(ModuleWithExplicitRNG):
@@ -50,3 +56,38 @@ def test_training_mode_propagates_to_nested_rng_modules():
 def test_missing_generator_error_is_not_swallowed():
     with pytest.raises(ValueError, match="generator required"):
         SequentialWithExplicitRNG(RandomOffset())(torch.ones(2))
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"0": 0.4, "1": -0.1},
+        {"0": 0.4, "1": float("nan")},
+        {"0": 0.4, "1": "invalid"},
+        {"0": 0.4},
+        {"0": 0.4, "unknown": 0.5},
+    ],
+)
+def test_invalid_dropout_config_leaves_all_layers_unchanged(config):
+    network = SequentialWithExplicitRNG(
+        DropoutWithExplicitRNG(0.1), DropoutWithExplicitRNG(0.2)
+    )
+    before = get_dropout_config(network)
+    with pytest.raises(ValueError, match="dropout"):
+        restore_dropout_config(network, config)
+    assert get_dropout_config(network) == before
+
+
+def test_dropout_config_round_trip_preserves_modes_and_snapshot():
+    network = SequentialWithExplicitRNG(
+        DropoutWithExplicitRNG(0.1),
+        SequentialWithExplicitRNG(nn.Identity(), DropoutWithExplicitRNG(0.2)),
+    )
+    network.eval()
+    before = get_dropout_config(network)
+    restore_dropout_config(network, {"0": 0.3, "1.1": 0.4})
+    assert get_dropout_config(network) == {"0": 0.3, "1.1": 0.4}
+    assert before == {"0": 0.1, "1.1": 0.2}
+    assert all(not module.training for module in network.modules())
+    restore_dropout_config(network, before)
+    assert get_dropout_config(network) == before

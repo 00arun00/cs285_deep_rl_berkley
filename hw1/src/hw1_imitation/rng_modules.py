@@ -70,6 +70,31 @@ class DropoutWithExplicitRNG(ModuleWithExplicitRNG):
         return f"p={self.p}"
 
 
+def get_dropout_config(model: nn.Module) -> dict[str, float]:
+    """Snapshot each dropout layer's probability under its module name."""
+    return {
+        name: module.p
+        for name, module in model.named_modules()
+        if isinstance(module, DropoutWithExplicitRNG)
+    }
+
+
+def restore_dropout_config(model: nn.Module, config: dict[str, float]) -> None:
+    """Validate the full configuration before applying per-layer probabilities."""
+    layers = {
+        name: module
+        for name, module in model.named_modules()
+        if isinstance(module, DropoutWithExplicitRNG)
+    }
+    if not isinstance(config, dict) or config.keys() != layers.keys():
+        raise ValueError("Configured dropout layer names do not match the model")
+    for p in config.values():
+        if not isinstance(p, (int, float)) or not 0.0 <= p < 1.0:
+            raise ValueError("Configured dropout probability must be in [0, 1)")
+    for name, p in config.items():
+        layers[name].p = p
+
+
 def override_dropout_p(model: nn.Module, p: float) -> None:
     """Explicitly override every dropout layer with one probability."""
     if not 0.0 <= p < 1.0:

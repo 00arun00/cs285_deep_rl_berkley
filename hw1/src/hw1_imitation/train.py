@@ -20,7 +20,7 @@ from torch.utils.data import DataLoader, Dataset, random_split
 from tqdm import tqdm
 
 import wandb
-from hw1_imitation.checkpoint import get_dropout_config, load_policy
+from hw1_imitation.checkpoint import load_policy
 from hw1_imitation.data import (
     Episode,
     EpisodeChunkDataset,
@@ -38,7 +38,7 @@ from hw1_imitation.evaluation import (
 from hw1_imitation.logging_utils import ExperimentLogger, build_training_summary
 from hw1_imitation.model import BasePolicy, PolicyConfig, PolicyType, build_policy
 from hw1_imitation.randomness import RandomStreamFactory, StreamId
-from hw1_imitation.rng_modules import override_dropout_p
+from hw1_imitation.rng_modules import get_dropout_config, override_dropout_p
 
 LOG_ROOT = "exp"
 
