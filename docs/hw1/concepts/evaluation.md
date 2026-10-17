@@ -61,6 +61,31 @@ In the locked Gym environment, coverage is block–goal intersection area divide
 
 ## Separate selection from final assessment
 
+Selection evaluations save candidates before checking whether training should stop. Final assessment reloads the best retained candidate; it does not rerank checkpoints.
+
+```mermaid
+sequenceDiagram
+    participant T as Training driver
+    participant E as Evaluator
+    participant C as Checkpoint storage
+    participant S as Plateau tracker
+    loop Each scheduled selection evaluation (also final training step)
+        T->>E: Score current policy with selection streams
+        E-->>T: Mean of episode maximum rewards
+        T->>C: Save and retain best K plus latest
+        opt Stopper enabled and training not complete
+            T->>S: Update with selection score and global step
+            S-->>T: Stop requested?
+        end
+    end
+    Note over T,C: After completion or stop request
+    T->>C: Load highest-scoring retained checkpoint
+    C-->>T: Selected policy and normalizer
+    T->>E: Evaluate with separate final streams
+    E-->>T: Final assessment
+    Note over T,C: Final score does not change checkpoint ranking
+```
+
 | Evaluation | Policy | Random streams | Budget |
 | --- | --- | --- | --- |
 | Periodic and final training step | Current policy. | `EVAL_ENV`, `EVAL_POLICY`. | `eval_episodes`. |

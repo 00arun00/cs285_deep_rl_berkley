@@ -1,22 +1,25 @@
 # From demonstrations to training batches
 
-The data pipeline preserves episode boundaries, fits normalization on training data, and turns each observation into an action-chunk prediction problem. Paths and array names are described in [Push-T data](pusht.md).
+The data pipeline preserves episode boundaries and turns each observation into an action-chunk prediction problem. Fresh policies fit normalization on training data; checkpoint-initialized policies reuse saved statistics. Paths and array names are described in [Push-T data](pusht.md).
 
 ```mermaid
 flowchart TD
-    A[Packed state and action arrays] --> B[Slice episodes using exclusive ends]
-    B --> C[Split episodes 80 / 20]
-    C --> D[Training episodes]
-    C --> E[Validation episodes]
-    D --> F[Fit normalization for a fresh policy]
-    F --> G[Normalize both subsets]
-    E --> G
-    D --> G
-    G --> H[Build windows within each episode]
-    H --> I[Training and validation loaders]
+    A[Load whole episodes] --> B[Split episodes 80 / 20]
+    B --> C[Training subset]
+    B --> D[Validation subset]
+    C --> E{Initialize from checkpoint?}
+    E -->|No| F[Fit statistics on training timesteps]
+    E -->|Yes| G[Load policy and saved statistics]
+    F --> H[Build fresh policy]
+    H --> I[Normalize both subsets]
+    G --> I
+    C --> I
+    D --> I
+    I --> J[Build episode-local windows using model horizon]
+    J --> K[Training and validation loaders]
 ```
 
-For `--init-from`, the saved normalizer replaces the fitting step. See [checkpoint semantics](checkpoints.md).
+Both paths build windows using the actual model horizon. With `--init-from`, new demonstrations must match the loaded policy’s dimensions and coordinate meaning; see [checkpoint semantics](checkpoints.md).
 
 ## Load and split episodes
 

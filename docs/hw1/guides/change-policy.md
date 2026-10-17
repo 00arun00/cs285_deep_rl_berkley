@@ -6,6 +6,30 @@ Read the [policy reference](../../reference/policies.md), [data pipeline](../con
 
 ## 1. Preserve the public tensor contract
 
+Both policy families implement [BasePolicy][hw1_imitation.model.BasePolicy] and own an MLP. The diagram shows the extension boundary; the table below specifies the tensor contract.
+
+```mermaid
+classDiagram
+    class BasePolicy {
+        <<abstract>>
+        reset_parameters(generator)
+        compute_loss(state, action_chunk, generator)
+        sample_actions(state, generator, num_steps)
+    }
+    class PolicyConfig
+    class MSEPolicy
+    class FlowMatchingPolicy
+    class MLP
+    BasePolicy <|-- MSEPolicy
+    BasePolicy <|-- FlowMatchingPolicy
+    BasePolicy --> PolicyConfig : retains config
+    MSEPolicy *-- MLP : model
+    FlowMatchingPolicy *-- MLP : model
+    note for BasePolicy "Caller owns normalization, device, and train/eval mode. No forward implementation."
+```
+
+Method labels omit defaults and keyword-only markers; use the [policy reference](../../reference/policies.md) for complete signatures.
+
 | Method | Inputs | Required behavior |
 | --- | --- | --- |
 | `reset_parameters(generator)` | Caller-owned initialization generator. | Initialize all parameters through that generator; work with the builder's CPU allocation path. |

@@ -27,7 +27,9 @@ flowchart TD
     F -->|No| H{Rollout evaluation due?}
     G --> H
     H -->|Yes| I[Score policy and save checkpoint]
-    I --> J[Check plateau stopping]
+    I --> N{Stopper enabled and training incomplete?}
+    N -->|Yes| J[Check plateau stopping]
+    N -->|No| K
     H -->|No| K{Complete or stop requested?}
     J --> K
     K -->|No| A
