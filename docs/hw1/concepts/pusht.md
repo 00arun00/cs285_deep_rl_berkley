@@ -69,3 +69,5 @@ Both policies take one normalized state and return a normalized action chunk sha
 The default fresh model is MSE with an eight-action chunk. Flow sampling defaults to ten integration steps. Both use the same demonstration pipeline and rollout evaluator; their loss values describe different objectives and should not be compared as a shared quality score.
 
 Continue with [demonstrations to batches](data-pipeline.md), [evaluation](evaluation.md), or the [policy reference](../../reference/policies.md).
+
+For implementation changes, follow [Change or add a policy](../guides/change-policy.md).

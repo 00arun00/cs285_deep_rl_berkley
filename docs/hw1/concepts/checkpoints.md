@@ -51,7 +51,7 @@ This is not an exhaustive up-front schema validator. Malformed contents can rais
 
 `--dropout-p` explicitly overrides all dropout layers, including when set to zero. If omitted, saved probabilities survive. The new training invocation uses its own `--flow-num-steps`, rather than inheriting the saved inference default.
 
-Use the existing [load and further-training recipe](https://github.com/00arun00/cs285_deep_rl_berkley/blob/main/hw1/README.md#reusing-policy-checkpoints) for commands. The [checkpoint API][hw1_imitation.checkpoint.load_policy] describes detailed contracts.
+Use the [save, load, and further-training guide](../guides/save-load-and-continue.md) for commands. The [checkpoint API][hw1_imitation.checkpoint.load_policy] describes detailed contracts.
 
 ## Atomic replacement protects the destination
 
@@ -96,3 +96,5 @@ With W&B enabled, saving proceeds locally, then uploads a model artifact and wai
 Cleanup failures can leave more records than the normal retention limit. Because final selection uses retained records, failed cleanup can also affect which records remain candidates. Videos and W&B caches are outside checkpoint retention.
 
 For the actual scheduling and final-selection point, return to the [training lifecycle](training-lifecycle.md).
+
+For serialization changes, follow [Change the checkpoint format](../guides/change-checkpoint-format.md).

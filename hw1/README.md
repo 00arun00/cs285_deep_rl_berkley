@@ -40,133 +40,33 @@ uv run modal volume get hw1-imitation-volume exp/<experiment_name>
 
 ## Dropout
 
-- `--dropout-p 0.2` enables hidden-activation dropout for MSE and flow policies.
-- When omitted, fresh models use `0` and loaded models retain their saved per-layer probabilities.
-  An explicit value (including `0`) overrides every dropout layer; accepted range: `0 <= p < 1`.
-- RNG-aware layers use the supplied training-loss generator; `.eval()` disables dropout.
-- Checkpoints save `training_config.dropout`, mapping module names to probabilities.
-  Loading requires matching dropout layer names and restores each value in evaluation
-  mode.
+See [Configure and compare experiments](../docs/hw1/guides/compare-experiments.md)
+for a paired dropout comparison, and [Save, load, and train further](../docs/hw1/guides/save-load-and-continue.md)
+for inherited probabilities and explicit overrides. The
+[randomness explanation](../docs/hw1/concepts/randomness.md) covers generator use
+and evaluation mode.
 
 ## Evaluation episode counts
 
-Use fewer episodes for periodic rollouts while keeping a full final evaluation:
-
-```bash
-uv run src/hw1_imitation/train.py --eval-episodes 5 --final-eval-episodes 100
-```
-
-| Evaluation | Episode budget | Policy |
-| --- | --- | --- |
-| Periodic and last training step | `--eval-episodes` | Current policy; used for checkpoint selection |
-| After completion or early stopping | `--final-eval-episodes` | Best retained checkpoint; separate random streams |
-
-Both budgets default to 100 and must be positive. Final scores do not affect
-checkpoint selection. Results go to `final_eval.csv` when CSV logging is enabled
-and `final/*` metrics when W&B is enabled.
+[Configure and compare experiments](../docs/hw1/guides/compare-experiments.md)
+explains selection and final budgets. See [Evaluation and results](../docs/hw1/concepts/evaluation.md)
+for metric definitions and [Inspect results](../docs/hw1/guides/inspect-results.md)
+for CSVs, checkpoints, and videos.
 
 ## Reusing policy checkpoints
 
-CSV metrics, W&B reporting, and persistent checkpoints are enabled by default:
-
-```bash
-uv run src/hw1_imitation/train.py --no-log-wandb
-uv run src/hw1_imitation/train.py --no-log-csv --no-log-wandb --no-save-checkpoints
-```
-
-`--no-log-csv` prevents metric CSV creation and writes. `--no-log-wandb` skips
-W&B initialization, metrics, video uploads, and checkpoint artifacts.
-`--no-save-checkpoints` saves checkpoints in a unique temporary directory per
-run instead of the experiment directory. W&B uploads and retention still apply.
-Temporary checkpoint directories are deleted on success and retained on failure.
-Progress, warnings, validation, and rollout evaluation remain enabled. Videos
-are still recorded unless `--num-video-episodes 0` is supplied. The run directory
-is still created with all three flags supplied.
-
-Each selection evaluation (including the last training step) saves a checkpoint.
-By default, its path is `exp/<experiment_name>/checkpoints/policy_step_<step>.pt`.
-`--checkpoint-top-k` (default: 3) retains the best K by rollout mean reward plus
-latest. Ties favor later checkpoints; zero keeps only latest. This applies to
-both persistent and temporary storage.
-
-With W&B enabled, checkpoints are also uploaded as model artifacts, with `best`
-(when K > 0) and `latest` aliases. Pruning waits for upload completion. Local-only
-runs apply the same retention without W&B. Cleanup failures are logged and retried
-at the next save; pending cleanup is reported at the end of training. Retry state
-does not persist across runs. Offline W&B runs remain unsupported; use
-`--no-log-wandb` for local-only runs. W&B cache files and evaluation videos are
-not covered by checkpoint retention.
-
-The policy checkpoint format (version 1) contains:
-
-- Model architecture, including the prediction horizon (`chunk_size`).
-- Learned weights, saved as CPU tensors.
-- Per-layer training configuration (`training_config.dropout`), restored on load.
-- Observation and action normalization statistics.
-- Default flow inference settings (`flow_num_steps`).
-
-Files are written atomically and loaded with `weights_only=True`. They do not
-contain optimizer history, random state, or training position. Legacy whole-model
-`.pkl` files and earlier experimental resume-checkpoint schemas are unsupported.
+[Save, load, and train further](../docs/hw1/guides/save-load-and-continue.md)
+covers the procedures. [Checkpoint format and lifecycle](../docs/hw1/concepts/checkpoints.md)
+explains saved state, retention, output flags, and failure handling.
 
 ### Load for inference or evaluation
 
-The original training dataset is not needed:
-
-```python
-import torch
-from hw1_imitation.checkpoint import load_policy
-
-model, normalizer, inference_config = load_policy(
-    "policy_step_12000.pt",
-    device="cpu",
-)
-
-# raw_observations: NumPy array shaped (batch, state_dim).
-states = torch.as_tensor(
-    normalizer.normalize_state(raw_observations),
-    dtype=torch.float32,
-)
-generator = torch.Generator(device=states.device).manual_seed(42)
-with torch.no_grad():
-    normalized_actions = model.sample_actions(
-        states,
-        generator=generator,
-        num_steps=inference_config["flow_num_steps"],
-    )
-actions = normalizer.denormalize_action(normalized_actions.cpu().numpy())
-# Clip actions to the environment's bounds before stepping it.
-```
-
-The loader returns the model in evaluation mode. For rollout evaluation, pass
-`model.chunk_size`, the saved `flow_num_steps`, and a `RandomStreamFactory` via
-`streams=` to `evaluate_policy()`. You can explicitly choose a different flow
-integration step count when evaluating.
+Follow the [inference and evaluation examples](../docs/hw1/guides/save-load-and-continue.md).
 
 ### Train further from saved weights
 
-Run these commands from `hw1/`. To initialize a new training run from a policy:
-
-```bash
-uv run src/hw1_imitation/train.py --init-from /path/to/policy_step_12000.pt --num-epochs 20 --lr 0.0001
-```
-
-This trains for **20 additional epochs** with a fresh optimizer, seed, counters,
-and logging run. Training and evaluation settings come from the new invocation's
-flags and defaults, except dropout probabilities: each layer inherits its checkpoint value
-unless `--dropout-p` uniformly overrides them. Use `--dropout-p 0` to disable saved dropout.
-In particular, evaluations use the new run's `--flow-num-steps` value.
-
-The loaded policy supplies its architecture and normalizer. `--policy-type`,
-`--hidden-dims`, and `--chunk-size` apply only to fresh models. Data preparation and
-rollout evaluation use the loaded model's actual horizon. The actual architecture
-is recorded under `model_config` in W&B alongside the requested run settings.
-New demonstrations must have compatible observation/action dimensions and meaning;
-the saved normalization is reused rather than fitted again.
-
-Omit `--init-from` to train a new model. Training loss is logged every
-`log_interval` steps and at the final step; loss windows may span epochs.
-This workflow does not attempt to reproduce an interrupted training trajectory.
+Follow the [new-training-run procedure](../docs/hw1/guides/save-load-and-continue.md).
+Policy checkpoints do not restore optimizer state, RNG position, or training position.
 
 ### Checks
 

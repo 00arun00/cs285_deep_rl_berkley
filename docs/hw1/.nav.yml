@@ -5,5 +5,6 @@ nav:
       - Small local training test: test-runs.md
       - Tests and checks: tests-and-checks.md
   - Understand the system: concepts
+  - Common tasks: guides
   - glob: "*"
     ignore_no_matches: true

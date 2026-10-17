@@ -76,3 +76,5 @@ Match a Torch generator's device to the operation that consumes it. The device d
 Root seeds must be nonnegative Python integers. Variations and indices must be Python integers in `[0, 2**32)`; booleans are rejected. An index does not increment automatically.
 
 Policy checkpoints do not store generator states. Loading weights therefore cannot resume an interrupted random trajectory. See [checkpoint limits](checkpoints.md) and the [RandomStreamFactory API][hw1_imitation.randomness.RandomStreamFactory].
+
+To introduce another independent responsibility, follow [Add a random stream](../guides/add-random-stream.md).

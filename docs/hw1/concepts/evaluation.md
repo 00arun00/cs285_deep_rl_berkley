@@ -78,3 +78,5 @@ Both budgets default to 100. Selection scores determine retention and plateau st
 - Videos help explain behavior but do not replace aggregate scores. Only the first configured episodes are recorded; videos are independently controlled and not pruned with checkpoints.
 
 For field contracts, see [ExperimentLogger][hw1_imitation.logging_utils.ExperimentLogger] and [evaluate_policy][hw1_imitation.evaluation.evaluate_policy]. For storage decisions, continue to [checkpoints](checkpoints.md).
+
+For practical steps, see [Configure and compare experiments](../guides/compare-experiments.md) and [Inspect results and diagnose a run](../guides/inspect-results.md).

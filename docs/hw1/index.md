@@ -11,7 +11,7 @@ These guides assume you know Python, PyTorch, and basic supervised learning. Use
 3. **Check a code change:** use the [tests and checks](tests-and-checks.md) for lint, formatting, and pytest commands.
 4. **Read or modify the implementation:** use the source map below, then consult the [Python reference](../reference/index.md) for signatures and detailed contracts.
 
-For an existing trained policy, start with [checkpoint loading and further training](https://github.com/00arun00/cs285_deep_rl_berkley/blob/main/hw1/README.md#reusing-policy-checkpoints). Further training starts a fresh optimizer and run; it does not resume an interrupted training trajectory.
+For an existing trained policy, start with [checkpoint loading and further training](guides/save-load-and-continue.md). Further training starts a fresh optimizer and run; it does not resume an interrupted training trajectory.
 
 ## What you will work with
 
@@ -74,3 +74,12 @@ Implementation modules below are relative to `hw1/src/hw1_imitation/`; tests are
 | `modal_train.py` | The optional remote-training entry point. |
 
 For a first code reading, follow `train.py` → `data.py` → `model.py` → `evaluation.py`. Return to the supporting modules when you need their specific behavior.
+
+## Common tasks
+
+- [Configure and compare experiments](guides/compare-experiments.md).
+- [Inspect results and diagnose a run](guides/inspect-results.md).
+- [Save, load, and continue training](guides/save-load-and-continue.md).
+- [Add a random stream](guides/add-random-stream.md).
+- [Change the checkpoint format](guides/change-checkpoint-format.md).
+- [Change or add a policy](guides/change-policy.md).
