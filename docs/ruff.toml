@@ -1,0 +1,6 @@
+# Invoked on the extracted pilot class by scripts/check_docs.py.
+[lint]
+select = ["D"]
+ignore = ["D100", "D101", "D102", "D103", "D104", "D105", "D107"]
+[lint.pydocstyle]
+convention = "google"

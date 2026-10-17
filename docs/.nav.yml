@@ -1,0 +1,7 @@
+nav:
+  - Overview: index.md
+  - Experiment guides: hw1
+  - Reference: reference
+  - Contributing: contributing
+  - glob: "*"
+    ignore_no_matches: true

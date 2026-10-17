@@ -1,0 +1,26 @@
+{# Opt-in layout: parsed Attributes prose plus live source annotations/defaults. #}
+{% extends "_base/class.html.jinja" %}
+{% block children scoped %}
+{% if config.extra.get("documented_fields") %}
+<div class="documented-fields">
+{% for section in class.docstring.parsed if section.kind.value == "attributes" %}
+{% for entry in section.value %}
+{% if entry.name in class.attributes %}
+{% set field = class.attributes[entry.name] %}
+<section class="documented-field" data-field="{{ entry.name }}">
+<div class="documented-field__main">
+{% filter heading(heading_level + 1, role="attribute", id=field.path, class="doc doc-heading documented-field__name", toc_label=entry.name, skip_inventory=config.skip_local_inventory) %}<code>{{ entry.name }}</code>{% endfilter %}
+<div class="documented-field__description">{{ entry.description|convert_markdown(heading_level + 1, field.path, autoref_hook=AutorefsHook(field, config)) }}</div>
+</div>
+<dl class="documented-field__metadata">
+{% if field.annotation %}<div><dt>Type</dt><dd><code>{{ field.annotation }}</code></dd></div>{% endif %}
+{% if field.value is not none %}<div><dt>Default</dt><dd><code>{{ field.value }}</code></dd></div>{% else %}<div><dt>Default</dt><dd>No default</dd></div>{% endif %}
+</dl>
+</section>
+{% endif %}
+{% endfor %}
+{% endfor %}
+</div>
+{% endif %}
+{{ super() }}
+{% endblock children %}

@@ -1,0 +1,82 @@
+[project]
+site_name = "RL / Fieldnotes"
+site_description = "Practical guides and reference for reinforcement learning experiments"
+repo_url = "https://github.com/00arun00/cs285_deep_rl_berkley"
+repo_name = "Source"
+extra_css = ["stylesheets/theme.css"]
+
+[project.theme]
+variant = "modern"
+font = false
+features = ["navigation.tabs", "navigation.sections", "navigation.indexes", "navigation.top", "navigation.footer", "content.code.copy", "content.code.annotate", "content.tabs.link", "search.highlight"]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "custom"
+accent = "custom"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "custom"
+accent = "custom"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+[project.markdown_extensions]
+admonition = {}
+attr_list = {}
+md_in_html = {}
+tables = {}
+toc.permalink = true
+pymdownx.details = {}
+pymdownx.highlight.anchor_linenums = true
+pymdownx.highlight.line_spans = "__span"
+pymdownx.highlight.pygments_lang_class = true
+pymdownx.inlinehilite = {}
+pymdownx.superfences = {}
+pymdownx.tabbed.alternate_style = true
+
+[project.plugins.awesome-nav]
+
+[project.plugins.mkdocstrings]
+custom_templates = "docs-overrides"
+
+[project.plugins.mkdocstrings.handlers.python]
+paths = ["hw1/src"]
+
+[project.plugins.mkdocstrings.handlers.python.options]
+allow_inspection = false
+show_source = true
+show_signature_annotations = true
+separate_signature = true
+show_root_heading = true
+show_root_full_path = false
+merge_init_into_class = true
+show_if_no_docstring = true
+show_symbol_type_heading = true
+members_order = "source"
+
+[project.plugins.api-autonav]
+modules = ["hw1/src/hw1_imitation"]
+api_root_uri = "api"
+nav_section_title = "Generated API"
+exclude_private = false
+
+[project.plugins.api-autonav.module_options.".*"]
+filters = []
+inherited_members = false
+show_if_no_docstring = true
+show_root_heading = true
+
+show_docstring_attributes = false
+show_labels = true
+show_symbol_type_heading = false
+merge_init_into_class = false
+docstring_section_style = "list"
+
+[project.plugins.api-autonav.module_options.".*".extra]
+documented_fields = true

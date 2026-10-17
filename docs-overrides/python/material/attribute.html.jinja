@@ -1,0 +1,8 @@
+{# Suppress only fields already rendered by the opt-in class layout. #}
+{% set rendered = namespace(value=false) %}
+{% if config.extra.get("documented_fields") and attribute.parent.is_class %}
+{% for section in attribute.parent.docstring.parsed if section.kind.value == "attributes" %}
+{% for entry in section.value if entry.name == attribute.name %}{% set rendered.value = true %}{% endfor %}
+{% endfor %}
+{% endif %}
+{% if not rendered.value %}{% include "_base/attribute.html.jinja" %}{% endif %}

@@ -140,7 +140,39 @@ class EpisodesDataset(Dataset[Episode]):
 
 @dataclass(frozen=True, slots=True)
 class Normalizer:
-    """Feature-wise normalizer for states and actions."""
+    """Normalize state and action features using stored means and scales.
+
+    Use [`from_packed_data`][hw1_imitation.data.Normalizer.from_packed_data] or [`from_episodes_data`][hw1_imitation.data.Normalizer.from_episodes_data] to fit statistics on training
+    observations, then reuse the same instance for validation and inference.
+    [`normalize_state`][hw1_imitation.data.Normalizer.normalize_state] and [`normalize_action`][hw1_imitation.data.Normalizer.normalize_action] standardize features;
+    [`denormalize_action`][hw1_imitation.data.Normalizer.denormalize_action] converts policy outputs back to action coordinates.
+
+    Direct construction borrows the four supplied NumPy arrays without copying
+    or changing their writeability. Frozen dataclass fields prevent rebinding,
+    but array contents remain mutable, including through external aliases.
+    Construction validates the statistics; transformations do not revalidate
+    them. [`state_dict`][hw1_imitation.data.Normalizer.state_dict] and [`from_state_dict`][hw1_imitation.data.Normalizer.from_state_dict] copy storage for checkpoints.
+
+    Attributes:
+        state_mean: Finite per-feature state means, shape `(state_dim,)`.
+        state_std: Finite, strictly positive state scales, matching `state_mean`.
+        action_mean: Finite per-feature action means, shape `(action_dim,)`.
+        action_std: Finite, strictly positive action scales, matching `action_mean`.
+
+    Raises:
+        ValueError: Statistics are empty, not matching one-dimensional vectors,
+            contain nonfinite values, or have nonpositive scales.
+
+    Examples:
+        Fit only on training data and reuse the resulting statistics:
+
+        ```python
+        normalizer = Normalizer.from_episodes_data(training_episodes)
+        normalized_states = normalizer.normalize_state(episode.states)
+        normalized_actions = normalizer.normalize_action(episode.actions)
+        actions = normalizer.denormalize_action(normalized_actions)
+        ```
+    """
 
     state_mean: np.ndarray
     state_std: np.ndarray
@@ -148,27 +180,97 @@ class Normalizer:
     action_std: np.ndarray
 
     def __post_init__(self) -> None:
+        """Validate statistics after dataclass construction.
+
+        This lifecycle hook also runs when a factory constructs an instance.
+        It neither copies nor freezes array storage.
+
+        Raises:
+            ValueError: A statistics vector is malformed or has invalid values.
+        """
         self._validate_statistics()
 
     def normalize_state(self, state: np.ndarray) -> np.ndarray:
+        """Standardize states by subtracting the mean and dividing by the scale.
+
+        Args:
+            state: State array, normally shaped `(..., state_dim)`. NumPy
+                broadcasting determines compatible shapes; rank, feature count,
+                dtype, and finite values are not checked explicitly.
+
+        Returns:
+            result: A newly computed array with the broadcast result shape. The input and
+                stored statistics are not modified; NumPy determines the result dtype.
+
+        Raises:
+            ValueError: Input and statistics cannot be broadcast together.
+        """
         return (state - self.state_mean) / self.state_std
 
     def normalize_action(self, action: np.ndarray) -> np.ndarray:
+        """Standardize actions by subtracting the mean and dividing by the scale.
+
+        Args:
+            action: Action array, normally shaped `(..., action_dim)`. NumPy
+                broadcasting determines compatibility; rank, feature count, dtype,
+                and finite values are not checked explicitly.
+
+        Returns:
+            result: A newly computed array with the broadcast result shape. The input and
+                stored statistics are not modified; NumPy determines the result dtype.
+
+        Raises:
+            ValueError: Input and statistics cannot be broadcast together.
+        """
         return (action - self.action_mean) / self.action_std
 
     def denormalize_action(self, action: np.ndarray) -> np.ndarray:
+        """Restore action coordinates by multiplying by the scale and adding the mean.
+
+        Args:
+            action: Normalized action array, normally shaped `(..., action_dim)`.
+                NumPy broadcasting determines compatibility; inputs are not
+                explicitly checked for rank, feature count, dtype, or finite values.
+
+        Returns:
+            result: A newly computed array in the original action coordinates, with the
+                broadcast result shape. Inputs and statistics are not modified.
+
+        Raises:
+            ValueError: Input and statistics cannot be broadcast together.
+        """
         return action * self.action_std + self.action_mean
 
     @property
     def state_dim(self):
+        """Return the number of state features in the stored mean vector.
+
+        Returns:
+            count (int): Number of entries in `state_mean`.
+        """
         return self.state_mean.shape[0]
 
     @property
     def action_dim(self):
+        """Return the number of action features in the stored mean vector.
+
+        Returns:
+            count (int): Number of entries in `action_mean`.
+        """
         return self.action_mean.shape[0]
 
     @staticmethod
     def _safe_std(std: np.ndarray, eps: float = 1e-6) -> np.ndarray:
+        """Clamp scales from below without modifying the input (implementation detail).
+
+        Args:
+            std: Array of per-feature scales computed by a fitting method.
+            eps: Lower bound applied elementwise. Positivity is assumed, not checked.
+
+        Returns:
+            result: A new array containing `maximum(std, eps)`. NaNs remain NaN and are
+                rejected by subsequent construction validation.
+        """
         return np.maximum(std, eps)
 
     @classmethod
@@ -177,6 +279,26 @@ class Normalizer:
         states: np.ndarray,
         actions: np.ndarray,
     ) -> "Normalizer":
+        """Fit feature statistics across the leading axis of packed training arrays.
+
+        Means and population standard deviations (`ddof=0`) use NumPy's input-dtype
+        rules. Scales are clamped to at least `1e-6`, including constant features.
+        Input arrays are not modified; computed statistics have independent storage.
+
+        Args:
+            states: Training states, intended shape `(timesteps, state_dim)`.
+            actions: Training actions, intended shape `(timesteps, action_dim)`.
+                Equal timestep counts and two-dimensional inputs are assumptions,
+                not explicit checks; each array is reduced independently.
+
+        Returns:
+            result: A normalizer containing the computed feature statistics.
+
+        Raises:
+            ValueError: Reduced statistics are not matching nonempty vectors or
+                contain invalid values. Empty or nonfinite inputs can also emit
+                NumPy warnings before validation fails.
+        """
         state_mean = states.mean(axis=0)
         state_std = cls._safe_std(states.std(axis=0))
         action_mean = actions.mean(axis=0)
@@ -187,6 +309,23 @@ class Normalizer:
     def from_episodes_data(
         cls, episodes: Sequence[Episode] | Dataset[Episode]
     ) -> "Normalizer":
+        """Fit statistics over all timesteps in a nonempty collection of episodes.
+
+        Episodes are concatenated before fitting; longer episodes contribute more
+        samples. This allocates combined state/action arrays, then delegates to
+        `from_packed_data`. Episode arrays are not modified or retained as statistics.
+
+        Args:
+            episodes: Iterable sequence or dataset of episodes with compatible
+                state feature dimensions and compatible action feature dimensions.
+
+        Returns:
+            result: A normalizer fitted to the concatenated demonstration data.
+
+        Raises:
+            ValueError: No episodes are supplied, feature shapes cannot be
+                concatenated, or the resulting statistics fail validation.
+        """
         states = [episode.states for episode in episodes]
         actions = [episode.actions for episode in episodes]
 
@@ -198,7 +337,20 @@ class Normalizer:
         return cls.from_packed_data(states=states, actions=actions)
 
     def state_dict(self) -> dict[str, torch.Tensor]:
-        """Return independent CPU tensors for the checkpoint's explicit schema."""
+        """Export independent CPU tensors for the checkpoint schema.
+
+        Revalidate statistics before export, since their arrays can have been
+        mutated after construction. Each returned tensor owns copied numerical
+        storage relative to this normalizer.
+
+        Returns:
+            result: Mapping with `state_mean`, `state_std`, `action_mean`, and `action_std`.
+                Tensor shapes and supported NumPy dtypes are preserved.
+
+        Raises:
+            ValueError: Stored statistics no longer pass validation.
+            TypeError: A statistics dtype is unsupported by `torch.from_numpy`.
+        """
         self._validate_statistics()
         return {
             "state_mean": torch.from_numpy(self.state_mean.copy()),
@@ -209,10 +361,26 @@ class Normalizer:
 
     @classmethod
     def from_state_dict(cls, state: dict[str, torch.Tensor]) -> "Normalizer":
-        """Restore validated statistics without sharing checkpoint storage.
+        """Restore statistics without sharing checkpoint tensor storage.
 
-        These four keys are part of the checkpoint format. Changes to
-        this schema must be coordinated with the outer checkpoint version.
+        Each tensor is detached, moved to CPU, converted to NumPy, and copied.
+        The four required keys belong to the checkpoint schema; extra keys are
+        ignored. Construction validates the restored arrays. Schema changes must
+        be coordinated with the outer checkpoint version.
+
+        Args:
+            state: Tensor mapping containing `state_mean`, `state_std`,
+                `action_mean`, and `action_std`. Tensors must support NumPy conversion.
+
+        Returns:
+            result: A normalizer whose statistics are independent copies of the tensors.
+
+        Raises:
+            KeyError: A required key is absent.
+            ValueError: Restored statistics fail construction validation.
+            TypeError: A tensor dtype or layout cannot be converted to NumPy.
+            RuntimeError: PyTorch rejects a tensor conversion, such as unresolved
+                conjugate or negative flags.
         """
 
         def to_array(name: str) -> np.ndarray:
@@ -231,6 +399,19 @@ class Normalizer:
         state_dim: int,
         action_dim: int,
     ) -> None:
+        """Check statistics against the policy's expected feature dimensions.
+
+        Only shapes are checked. This does not revalidate finite values or positive
+        scales and does not modify the arrays.
+
+        Args:
+            state_dim: Expected number of state features.
+            action_dim: Expected number of action features.
+
+        Raises:
+            ValueError: Any statistics array has a shape different from its
+                expected one-dimensional feature shape.
+        """
         expected_shapes = (
             ("state_mean", self.state_mean, (state_dim,)),
             ("state_std", self.state_std, (state_dim,)),
@@ -245,6 +426,14 @@ class Normalizer:
                 )
 
     def _validate_statistics(self) -> None:
+        """Check vector shapes and finite values (implementation detail).
+
+        Each mean must be a nonempty vector with a matching scale vector; scales
+        must be strictly positive. No dtype requirement or copying is imposed.
+
+        Raises:
+            ValueError: A shape, finiteness, or positive-scale requirement fails.
+        """
         for name, mean, std in (
             ("state", self.state_mean, self.state_std),
             ("action", self.action_mean, self.action_std),

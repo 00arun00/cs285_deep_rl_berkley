@@ -1,0 +1,7 @@
+{# Generated dataclass constructors have no source line; explicit methods do. #}
+{% if function.lineno %}
+{% if function.parent.is_class and function.name.startswith("_") and not function.name.startswith("__") %}
+<p class="doc-implementation-detail">Implementation detail</p>
+{% endif %}
+{% include "_base/function.html.jinja" %}
+{% endif %}
