@@ -151,6 +151,27 @@ class Defaults:
 '''
 
 
+ENUM_FIXTURE = '''
+from enum import Enum, IntEnum as IntegerEnum
+
+class Registry(IntegerEnum):
+    """Permanent responsibility IDs.
+
+    Attributes:
+        FIRST: First responsibility.
+    """
+    FIRST = 7
+
+class Status(Enum):
+    """Named status values.
+
+    Attributes:
+        READY: Ready status.
+    """
+    READY = "ready"
+'''
+
+
 class SharedRenderingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -158,8 +179,8 @@ class SharedRenderingTests(unittest.TestCase):
         cls.addClassCleanup(cls.directory.cleanup)
         root = Path(cls.directory.name)
         (root / 'docs').mkdir()
-        (root / 'fixture.py').write_text(textwrap.dedent(FIXTURE)+textwrap.dedent(FIELD_FIXTURE))
-        (root / 'docs/index.md').write_text('# Fixture\n\n::: fixture.Example\n\n::: fixture.Storage\n\n::: fixture.Defaults\n')
+        (root / 'fixture.py').write_text(textwrap.dedent(FIXTURE)+textwrap.dedent(FIELD_FIXTURE)+textwrap.dedent(ENUM_FIXTURE))
+        (root / 'docs/index.md').write_text('# Fixture\n\n::: fixture.Example\n\n::: fixture.Storage\n\n::: fixture.Defaults\n\n::: fixture.Registry\n\n::: fixture.Status\n')
         (root / 'zensical.toml').write_text(f'''[project]
 site_name = "API regression fixture"
 [project.markdown_extensions]
@@ -296,6 +317,18 @@ documented_fields = true
         row = self.field_row('required')
         self.assertIn('<dt>Default</dt>', row)
         self.assertIn('No default', row)
+
+    def test_enum_members_render_values_not_constructor_defaults(self):
+        for class_name, member, value in [('Registry', 'FIRST', '7'), ('Status', 'READY', 'ready')]:
+            with self.subTest(member=member):
+                row = self.field_row(member)
+                self.assertIn('<dt>Value</dt>', row)
+                self.assertIn(value, row)
+                self.assertNotIn('<dt>Default</dt>', row)
+                self.assertNotIn('Assigned value', row)
+                self.assertEqual(self.html.count('id="fixture.'+class_name+'.'+member+'"'), 1)
+        self.assertIn('<dt>Default</dt>', self.field_row('plain'))
+        self.assertNotIn('<dt>Value</dt>', self.field_row('plain'))
 
     def test_plain_field_retains_compact_presentation(self):
         self.assertIn('data-field="plain"', self.html)

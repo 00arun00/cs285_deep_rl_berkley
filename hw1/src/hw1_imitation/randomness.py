@@ -1,13 +1,20 @@
-"""Stable identities for reproducible random streams.
+"""Assign stable identities to reproducible random streams.
 
-The identity of a random stream is:
-    (root_seed, stream_id, variation, index)
+**Identity and lifecycle**
 
-Registry values and the seed-material encoding are permanent contracts.
-Changing either changes the resulting randomness.
+1. Choose a permanent responsibility from [StreamId][hw1_imitation.randomness.StreamId].
+2. Create a [RandomStreamFactory][hw1_imitation.randomness.RandomStreamFactory]
+   with the experiment's root seed.
+3. Select a variation and explicit peer index, then request a NumPy generator,
+   Torch generator, or integer seed.
 
-This module controls random-stream assignment. It does not guarantee
-identical numerical results across devices or library versions.
+The identity is `(root_seed, stream_id, variation, index)`. Each generator
+request starts a fresh stream; retain the returned object to advance it or
+recreate the same identity to replay it. Global RNG state is not modified.
+
+Registry values and seed-material encoding are permanent contracts. This
+module controls stream assignment, not identical numerical results across
+devices or library versions.
 """
 
 from __future__ import annotations
@@ -23,15 +30,25 @@ _UINT32_LIMIT = 1 << 32  # 2**32
 
 @unique
 class StreamId(IntEnum):
-    """Permanent IDs for distinct randomness responsibilities.
+    """Name the permanent integer IDs for distinct randomness responsibilities.
 
-    Rules:
-        * Assign IDs explicitly.
-        * Preserve an ID when renaming its member.
-        * Never reuse a retired ID.
-        * Add a new ID when introducing an independent responsibility.
+    **Registry rules**
 
-    Declaration order has no effect on seed derivation.
+    - Assign IDs explicitly; declaration order does not affect seed derivation.
+    - Preserve an ID when renaming a member, and never reuse a retired ID.
+    - Add a new ID for an independent responsibility.
+
+    Attributes:
+        DATA_SPLIT: Select training and validation episode membership.
+        MODEL_INIT: Initialize model weights independently of training randomness.
+        TRAIN_LOADER: Shuffle training samples and isolate training-loader randomness.
+        VALIDATION_LOADER: Isolate validation-loader randomness.
+        TRAIN_LOSS: Sample training-loss noise, times, and active dropout.
+        VALIDATION_LOSS: Sample stochastic validation losses separately from training.
+        EVAL_ENV: Seed environments used for periodic evaluation.
+        EVAL_POLICY: Sample policy actions during periodic evaluation.
+        FINAL_EVAL_ENV: Seed environments for final evaluation of the selected model.
+        FINAL_EVAL_POLICY: Sample policy actions during that final evaluation.
     """
 
     DATA_SPLIT = 1  # Choose train/validation episode membership
@@ -54,30 +71,40 @@ class StreamId(IntEnum):
 
 @dataclass(frozen=True, slots=True)
 class RandomStreamFactory:
-    """Stateless factory for reproducible generators and integer seeds.
+    """Derive fresh generators and integer seeds from explicit stream coordinates.
 
-    Identity: (root_seed, stream_id, variation, index)
-        root_seed: Common seed from which all stream identities are derived.
-        stream_id: Permanent identifier for a randomness responsibility.
-        variation: Independently selected realization of that stream (default 0).
-        index: Explicit peer identifier within a variation, such as an evaluation
-            episode index (default 0). It never increments automatically.
+    **Coordinates**
 
-    Every generator call returns a fresh object at its starting state.
-    Create it once and retain it to advance a stream; recreate it to replay.
-    No global RNG state is modified.
+    - `stream` selects a permanent `StreamId` responsibility.
+    - `variation` selects a realization of that responsibility; default zero.
+    - `index` identifies a peer, such as an evaluation episode; default zero.
+      It never increments automatically.
 
-    Reproducibility assumes unchanged encoding, library behavior, device,
-    sampling operations, and arguments. Distinct identities can theoretically
-    collide, particularly when reduced to integer seeds.
+    **Reproducibility boundaries**
 
-    Invalid argument types raise TypeError. Out-of-range integers raise
-    ValueError. No runtime warnings are emitted by this factory.
+    - Every generator request returns a fresh object at its starting state. Keep
+      that object for sequential draws; recreating it replays the stream.
+    - No global RNG state is changed. The factory stores no advancing stream state.
+    - Replay assumes unchanged encoding, library behavior, device, sampling
+      operations, and arguments. Distinct identities can theoretically collide,
+      especially when reduced to integer seeds.
+
+    Attributes:
+        root_seed: Nonnegative Python integer shared by derived identities. Booleans
+            and non-Python integer types are rejected; there is no upper bound.
     """
 
     root_seed: int
 
     def __post_init__(self) -> None:
+        """Validate the root seed when the frozen dataclass is constructed.
+
+        No generator or seed material is created by this lifecycle hook.
+
+        Raises:
+            TypeError: `root_seed` is not a Python integer or is a boolean.
+            ValueError: `root_seed` is negative.
+        """
         self._validate_integer(
             self.root_seed,
             name="root_seed",
@@ -93,9 +120,16 @@ class RandomStreamFactory:
     ) -> None:
         """Validate stream coordinates without constructing seed material.
 
+        Args:
+            stream: A `StreamId` member, not its raw integer value. Its numeric ID must
+                fit in an unsigned 32-bit word.
+            variation: Python integer in `[0, 2**32)`, excluding booleans.
+            index: Python integer in `[0, 2**32)`, excluding booleans.
+
         Raises:
-            TypeError: A coordinate has an unsupported type.
-            ValueError: An integer coordinate is outside [0, 2**32).
+            TypeError: The stream is not a `StreamId`, or a coordinate has an unsupported
+                type, including a boolean or NumPy integer.
+            ValueError: An integer coordinate is outside `[0, 2**32)`.
         """
         if not isinstance(stream, StreamId):
             raise TypeError("stream must be a StreamId member")
@@ -118,7 +152,18 @@ class RandomStreamFactory:
         name: str,
         upper_bound: int | None = _UINT32_LIMIT,
     ) -> None:
-        """Require a nonnegative Python integer without coercion."""
+        """Check a Python integer without coercion (implementation detail).
+
+        Args:
+            value: Integer to check; booleans are explicitly excluded.
+            name: Coordinate name included in validation error messages.
+            upper_bound: Exclusive limit, or `None` for no upper limit. This helper
+                assumes the supplied bound is suitable for comparison.
+
+        Raises:
+            TypeError: `value` is not a Python integer or is a boolean.
+            ValueError: `value` is negative or reaches the supplied upper bound.
+        """
         if isinstance(value, bool) or not isinstance(value, int):
             raise TypeError(f"{name} must be a Python int, excluding bool")
         if value < 0:
@@ -133,7 +178,26 @@ class RandomStreamFactory:
         variation: int = 0,
         index: int = 0,
     ) -> np.random.SeedSequence:
-        """Derive fresh seed material from a validated identity."""
+        """Build fresh NumPy seed material from a validated identity.
+
+        This implementation detail encodes entropy in the permanent order
+        `[int(stream), variation, index, root_seed]`. Fixed 32-bit coordinates come
+        first; the arbitrary-sized root comes last. Preserve the explicit zero index
+        and field order to keep existing streams reproducible.
+
+        Args:
+            stream: Registered `StreamId` responsibility.
+            variation: Realization coordinate in `[0, 2**32)`.
+            index: Explicit peer coordinate in `[0, 2**32)`.
+
+        Returns:
+            sequence: New `SeedSequence` initialized from the identity, without changing
+                the factory or any global random state.
+
+        Raises:
+            TypeError: A stream or coordinate has an unsupported type.
+            ValueError: A coordinate is outside the unsigned 32-bit range.
+        """
         self.validate(stream, variation=variation, index=index)
 
         # Coordinates occupy fixed 32-bit words. The arbitrary-sized root
@@ -149,7 +213,24 @@ class RandomStreamFactory:
         variation: int = 0,
         index: int = 0,
     ) -> np.random.Generator:
-        """Return a fresh NumPy generator using explicitly chosen PCG64."""
+        """Return a fresh NumPy generator using the explicit PCG64 bit generator.
+
+        Reuse the returned generator for successive draws. Another call with the same
+        coordinates starts again rather than continuing the earlier object.
+
+        Args:
+            stream: Registered `StreamId` responsibility.
+            variation: Python integer realization in `[0, 2**32)`, excluding booleans.
+            index: Python integer peer index in `[0, 2**32)`, excluding booleans.
+
+        Returns:
+            generator: Independent generator initialized from the derived seed sequence.
+                Its draws do not advance another generator or the global NumPy RNG.
+
+        Raises:
+            TypeError: A stream or coordinate has an unsupported type.
+            ValueError: A coordinate is outside the unsigned 32-bit range.
+        """
         sequence = self._seed_sequence(
             stream,
             variation=variation,
@@ -164,10 +245,25 @@ class RandomStreamFactory:
         variation: int = 0,
         index: int = 0,
     ) -> int:
-        """Return a deterministic Python integer in [0, 2**64).
+        """Return a deterministic unsigned 64-bit seed as a Python integer.
 
-        Suitable for Torch manual_seed() and standard Gymnasium reset().
-        Consumers may impose narrower limits or use fewer effective bits.
+        Generate one `uint64` word from a fresh seed sequence. Suitable consumers include
+        Torch `manual_seed()` and standard Gymnasium `reset()`; consumers may impose
+        narrower limits or use fewer effective bits. Distinct identities are not
+        mathematically guaranteed to produce distinct reduced seeds.
+
+        Args:
+            stream: Registered `StreamId` responsibility.
+            variation: Python integer realization in `[0, 2**32)`, excluding booleans.
+            index: Python integer peer index in `[0, 2**32)`, excluding booleans.
+
+        Returns:
+            seed: Python integer in `[0, 2**64)`, repeated for the same identity under
+                unchanged seed derivation behavior.
+
+        Raises:
+            TypeError: A stream or coordinate has an unsupported type.
+            ValueError: A coordinate is outside the unsigned 32-bit range.
         """
         sequence = self._seed_sequence(
             stream,
@@ -186,9 +282,25 @@ class RandomStreamFactory:
     ) -> torch.Generator:
         """Return a fresh Torch generator on the requested device.
 
-        Use the same device as where the operation is going to be performed.
-        Unsupported or unavailable devices fail through PyTorch;
-        there is no automatic device fallback.
+        Seed it with [seed][hw1_imitation.randomness.RandomStreamFactory.seed] for the
+        same coordinates. The device does not change the derived integer seed, but
+        sampling results can differ by device. Match the generator to the operation's
+        sampling device; unsupported or unavailable devices fail through PyTorch with
+        no automatic fallback.
+
+        Args:
+            stream: Registered `StreamId` responsibility.
+            variation: Python integer realization in `[0, 2**32)`, excluding booleans.
+            index: Python integer peer index in `[0, 2**32)`, excluding booleans.
+            device: Device accepted by `torch.Generator`, defaulting to CPU.
+
+        Returns:
+            generator: New, manually seeded Torch generator. Retain it to advance the
+                stream; another request with the same coordinates starts a replay.
+
+        Raises:
+            TypeError: A stream or coordinate has an unsupported type.
+            ValueError: A coordinate is outside the unsigned 32-bit range.
         """
         seed = self.seed(stream, variation=variation, index=index)
         return torch.Generator(device=device).manual_seed(seed)
