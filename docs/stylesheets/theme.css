@@ -87,7 +87,8 @@
 .md-typeset div.highlight { border: 1px solid var(--field-border); border-radius: 6px; overflow: hidden; }
 .md-typeset div.highlight pre { margin: 0; }
 .md-typeset div.highlight span.filename { background: var(--md-code-bg-color); border-bottom: 1px solid var(--field-border); color: var(--md-default-fg-color--light); }
-.md-typeset table:not([class]) { border: 1px solid var(--field-border); border-radius: 4px; }
+.md-typeset .md-typeset__table { display: block; }
+.md-typeset table:not([class]) { display: table; width: 100%; border: 1px solid var(--field-border); border-radius: 4px; }
 .md-typeset table:not([class]) th { background: var(--md-code-bg-color); }
 .md-typeset a:not(.md-button):hover { text-decoration: underline; text-underline-offset: .2em; }
 .md-nav__link--active { font-weight: 650; }
@@ -130,6 +131,14 @@
   outline-offset: 1px;
 }
 .md-typeset div.highlight:not(:has(> .filename)) pre > code { padding-right: 3.3em; }
+/* Keep scrolling commands beside the copy control, never underneath it. */
+.md-typeset div.highlight:not(.doc-signature):not(:has(.filename, .highlighttable)) > pre {
+  padding-right: 2.8em;
+  background: var(--md-code-bg-color);
+}
+.md-typeset div.highlight:not(.doc-signature):not(:has(.filename, .highlighttable)) > pre > code {
+  padding-right: 1.25em;
+}
 .md-typeset .doc-signature pre > code {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -149,7 +158,9 @@
 /* Expanded, line-numbered source uses the same readable scale as examples. */
 .md-typeset details div.highlight { font-size: .82rem; }
 .md-typeset .highlighttable { margin: 0; }
-.md-typeset div.highlight:not(:has(.filename)):not(.doc-signature) {
+/* Line-numbered source needs a toolbar above its two-column code table.
+   Ordinary fences reserve horizontal room for the copy control instead. */
+.md-typeset div.highlight:has(.highlighttable):not(:has(.filename)) {
   padding-top: 2.3em;
   background: var(--md-code-bg-color);
 }
