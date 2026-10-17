@@ -1,0 +1,4 @@
+{# Only plain fields without independent documentation can be replaced completely. #}
+{% macro compact_field(field) -%}
+{%- if "property" not in field.labels and not (field.docstring and field.docstring.value.strip()) -%}true{%- endif -%}
+{%- endmacro %}

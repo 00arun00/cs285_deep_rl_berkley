@@ -1,0 +1,14 @@
+{# Keep native sections and a single anchor for properties/detailed attributes. #}
+{% extends "_base/attribute.html.jinja" %}
+{% block docstring scoped %}
+{% if config.extra.get("documented_fields") and attribute.parent.is_class %}
+{% for section in attribute.parent.docstring.parsed if section.kind.value == "attributes" %}
+{% for entry in section.value if entry.name == attribute.name %}
+{% if not attribute.docstring or entry.description.strip() != attribute.docstring.value.strip() %}
+<div class="documented-field__summary">{{ entry.description|convert_markdown(heading_level, attribute.path, autoref_hook=AutorefsHook(attribute, config)) }}</div>
+{% endif %}
+{% endfor %}
+{% endfor %}
+{% endif %}
+{{ super() }}
+{% endblock docstring %}

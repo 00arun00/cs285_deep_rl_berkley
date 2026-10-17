@@ -64,6 +64,50 @@ def documented(obj, kind):
     return result
 
 
+def output_doc_issues(method, member):
+    """Check documented outputs from annotations and the method's own syntax.
+
+    This is deliberately not runtime inference: any explicit non-None return
+    expression needs a description even if it might evaluate to None. Nested
+    scopes are excluded. Generator yield values and terminal return values are
+    separate contracts; a generator annotation alone does not require Returns.
+    """
+    issues, ambiguities = [], []
+    nodes = list(own_nodes(method.body))
+    value_returns = [node for node in nodes if isinstance(node, ast.Return)
+                     and node.value is not None
+                     and not (isinstance(node.value, ast.Constant) and node.value.value is None)]
+    generator = any(isinstance(node, (ast.Yield, ast.YieldFrom)) for node in nodes)
+    # Read the AST decorator, not the shared Griffe property labels: a setter
+    # has the same member name but does not inherit the getter's output contract.
+    property_getter = any(ast.unparse(decorator) in {'property', 'builtins.property'}
+                          for decorator in method.decorator_list)
+    annotation = ast.unparse(method.returns) if method.returns is not None else ''
+    annotated_result = bool(annotation and annotation not in {'None', "'None'", '"None"'})
+    returns = []
+    yields = []
+    if member.docstring:
+        for section in member.docstring.parsed:
+            if section.kind.value == 'returns': returns.extend(section.value)
+            if section.kind.value == 'yields': yields.extend(section.value)
+    needs_return = bool(value_returns or property_getter or (annotated_result and not generator))
+    if needs_return and not returns: issues.append('Missing return description: '+method.name)
+    if generator and not yields: issues.append('Missing yield description: '+method.name)
+    if any(not entry.description.strip() for entry in returns): issues.append('Empty return description: '+method.name)
+    if any(not entry.description.strip() for entry in yields): issues.append('Empty yield description: '+method.name)
+    if annotated_result and not generator and not any(word in annotation for word in ('tuple', 'Tuple', 'Generator', 'Iterator', 'Iterable')) and len(returns)>1:
+        issues.append('Multiple parsed returns for single-result annotation: '+method.name)
+    if value_returns and any(not isinstance(node.value, ast.Constant) for node in value_returns):
+        ambiguities.append('Return expression may evaluate to None; output documentation required without runtime inference')
+    if property_getter and not value_returns:
+        ambiguities.append('Property output contract requires review: no explicit value-return path was found')
+    if generator and value_returns:
+        ambiguities.append('Generator terminal return is separate from yielded values; review its StopIteration.value contract')
+    if not generator and any(word in annotation for word in ('Generator', 'Iterator', 'Iterable')):
+        ambiguities.append('Iterator annotation without local yield: Returns describes the returned object; iteration semantics require review')
+    return issues, ambiguities
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--pilot', default=PILOT, help='Qualified class to enforce; other classes remain report-only')
@@ -124,15 +168,9 @@ def main():
             for method in methods:
                 if not (ast.get_docstring(method) or "").strip(): issues.append('Missing member docstring: '+method.name)
                 member=obj[method.name]; params=documented(member,'parameters')
-                if member.docstring:
-                    returns = [entry for section in member.docstring.parsed if section.kind.value == 'returns' for entry in section.value]
-                    if method.returns is not None and not (isinstance(method.returns, ast.Constant) and method.returns.value is None):
-                        if not returns: issues.append('Missing return description: '+method.name)
-                        # Tuple/generator APIs can legitimately document several values.
-                        annotation = ast.unparse(method.returns)
-                        if not any(word in annotation for word in ('tuple', 'Tuple', 'Generator', 'Iterator', 'Iterable')) and len(returns)>1:
-                            issues.append('Multiple parsed returns for single-result annotation: '+method.name)
-                    if any(not entry.description.strip() for entry in returns): issues.append('Empty return description: '+method.name)
+                output_issues, output_ambiguities = output_doc_issues(method, member)
+                issues.extend(output_issues)
+                report['exceptions'].extend({'path': path+'.'+method.name, 'reason': reason} for reason in output_ambiguities)
                 for name in sorted(parameters(method)-params.keys()): issues.append('Missing parameter: '+method.name+'.'+name)
                 for name in sorted(params.keys()-parameters(method)): issues.append('Stale parameter: '+method.name+'.'+name)
                 for name,desc in params.items():

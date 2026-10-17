@@ -1,5 +1,6 @@
 {# Opt-in layout: parsed Attributes prose plus live source annotations/defaults. #}
 {% extends "_base/class.html.jinja" %}
+{% import "documented_fields.html.jinja" as documented %}
 {% block children scoped %}
 {% if config.extra.get("documented_fields") %}
 <div class="documented-fields">
@@ -7,6 +8,7 @@
 {% for entry in section.value %}
 {% if entry.name in class.attributes %}
 {% set field = class.attributes[entry.name] %}
+{% if documented.compact_field(field) %}
 <section class="documented-field" data-field="{{ entry.name }}">
 <div class="documented-field__main">
 {% filter heading(heading_level + 1, role="attribute", id=field.path, class="doc doc-heading documented-field__name", toc_label=entry.name, skip_inventory=config.skip_local_inventory) %}<code>{{ entry.name }}</code>{% endfilter %}
@@ -17,6 +19,7 @@
 {% if field.value is not none %}<div><dt>Default</dt><dd><code>{{ field.value }}</code></dd></div>{% else %}<div><dt>Default</dt><dd>No default</dd></div>{% endif %}
 </dl>
 </section>
+{% endif %}
 {% endif %}
 {% endfor %}
 {% endfor %}
