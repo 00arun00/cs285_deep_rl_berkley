@@ -2,41 +2,17 @@
 
 ## Setup
 
-This project uses `uv` for package management. `uv` is a Python package and environment manager from [Astral](https://astral.sh). It replaces tools like
-`pip`, `pipx`, `conda`, and `virtualenv` with a single, simple interface. It is also much faster than prior tools.
+Follow [Development setup and tools](../docs/hw1/setup.md) for Python, uv, the
+HW1 environment, and required versus optional tools. Run HW1 commands from this
+directory.
 
-### Installing `uv`
-
-Run the following in your terminal:
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-After installation, open a new terminal so `uv` is on your `PATH`.
-
-### Always use `uv run`
-
-Do **not** run `python` or `pip` directly. Always run scripts through `uv run` so dependencies
-and environments are handled automatically. If you want to add a new dependency, you can use `uv add`. This will add the dependency to `pyproject.toml`, update `uv.lock`, and install the package into your virtual environment.
-
-Example:
-
-```bash
-uv run src/hw1_imitation/train.py --help
-```
-
-This should work out of the box with the provided starter code.
+Then use [Run a small local training test](../docs/hw1/test-runs.md) to exercise
+the pipeline with reduced output and evaluation budgets.
 
 ## Weights & Biases (wandb) login
 
-These assignments use [Weights & Biases (WandB)](https://wandb.ai) for experiment tracking. WandB is a tool for logging and visualizing machine learning experiments. It is free for academic use. For W&B logging (enabled by default), log in using your API key. Local-only runs with `--no-log-wandb` do not require W&B login.
-
-```bash
-uv run wandb login
-```
-
-Follow the prompt to paste your API key.
+See [optional services and tools](../docs/hw1/setup.md) for W&B setup.
+Local-only runs with `--no-log-wandb` do not require W&B login.
 
 ## Using Modal
 
@@ -194,30 +170,8 @@ This workflow does not attempt to reproduce an interrupted training trajectory.
 
 ### Checks
 
-GitHub Actions runs the HW1 checks on every pull request irrespective of the
-target branch and every push to `main`, using Linux and the Python
-version in `.python-version`.
-The `HW1 checks` job installs locked dependencies, runs Ruff lint and test
-formatting checks, and runs pytest. The accelerator test skips when no accelerator
-is available. The job is required by the `main` branch merge rules.
-
-```bash
-uv sync --locked --dev
-uv run --no-sync ruff check src tests
-uv run --no-sync ruff format --check tests
-uv run src/hw1_imitation/train.py --help
-uv run pytest -v
-```
-
-All tests use pytest, with parameterized cases for policy variants, output
-combinations, and invalid inputs.
-To run only the flow checkpoint variants, use
-`uv run pytest tests/test_checkpoint.py -k flow -v`.
-
-Tests cover policy round trips, training, evaluation budgets, logging, checkpoint
-retention, and random-stream isolation. Data access, physics environments, and W&B
-services are mocked. An accelerator transfer test runs when hardware is available;
-the suite does not exercise GPU training or remote uploads.
+[Tests and checks](../docs/hw1/tests-and-checks.md) covers the full suite,
+individual tests, lint and formatting, the contracts under test, and CI commands.
 
 ## Early stopping
 

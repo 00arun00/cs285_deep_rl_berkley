@@ -1,6 +1,6 @@
 nav:
   - Overview: index.md
-  - Experiment guides: hw1
+  - Start here: hw1
   - Reference: reference
   - Contributing: contributing
   - glob: "*"
