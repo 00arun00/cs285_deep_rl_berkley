@@ -1,0 +1,9 @@
+nav:
+  - Configure and compare experiments: compare-experiments.md
+  - Inspect results and diagnose a run: inspect-results.md
+  - Save, load, and continue training: save-load-and-continue.md
+  - Add a random stream: add-random-stream.md
+  - Change the checkpoint format: change-checkpoint-format.md
+  - Change or add a policy: change-policy.md
+  - glob: "*"
+    ignore_no_matches: true

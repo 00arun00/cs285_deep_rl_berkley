@@ -1,2 +1,12 @@
 .DS_Store
 codebook.toml
+
+# Documentation build artifacts
+/.venv/
+/site/
+/.cache/
+
+# Documentation publishing artifacts
+/docs-artifact/
+/docs-coverage.json
+/.docs-build-*.toml

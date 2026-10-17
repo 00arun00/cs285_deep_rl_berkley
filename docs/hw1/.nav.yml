@@ -1,0 +1,11 @@
+nav:
+  - Start here:
+      - Orientation: index.md
+      - Development setup and tools: setup.md
+      - Small local training test: test-runs.md
+      - Tests and checks: tests-and-checks.md
+  - Understand the system: concepts
+  - Common tasks: guides
+  - Troubleshooting: troubleshooting.md
+  - glob: "*"
+    ignore_no_matches: true

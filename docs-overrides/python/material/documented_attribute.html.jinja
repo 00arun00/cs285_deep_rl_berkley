@@ -1,0 +1,30 @@
+{# Keep native sections and a single anchor for properties/detailed attributes. #}
+{% extends "_base/attribute.html.jinja" %}
+{% block docstring scoped %}
+{% if config.extra.get("documented_fields") and attribute.parent.is_class %}
+{% for section in attribute.parent.docstring.parsed if section.kind.value == "attributes" %}
+{% for entry in section.value if entry.name == attribute.name %}
+{% if not attribute.docstring or entry.description.strip() != attribute.docstring.value.strip() %}
+<div class="documented-field__summary">{{ entry.description|convert_markdown(heading_level, attribute.path, autoref_hook=AutorefsHook(attribute, config)) }}</div>
+{% endif %}
+{% endfor %}
+{% endfor %}
+{% endif %}
+{{ super() }}
+{# Accessors share the property's object identity, but have independent docs.
+   Native docstring sections keep parameter/return/exception/example rendering.
+   A distinct Markdown namespace prevents inner headings colliding with the getter. #}
+{% if "property" in attribute.labels %}
+{% for accessor_name, accessor in [("setter", attribute.setter), ("deleter", attribute.deleter)] %}
+{% if accessor and accessor.docstring and accessor.docstring.value.strip() %}
+{% set accessor_heading_level = [heading_level + 1, 6]|min %}
+<section class="doc-property-accessor" data-accessor="{{ accessor_name }}" data-property="{{ attribute.path }}" aria-label="{{ attribute.name }} {{ accessor_name }}">
+{% filter heading(accessor_heading_level, id=attribute.path ~ "--" ~ accessor_name, class="doc doc-heading", toc_label=accessor_name|capitalize, skip_inventory=true) %}{{ accessor_name|capitalize }}{% endfilter %}
+{% with obj = accessor, docstring_sections = accessor.docstring.parsed, html_id = attribute.path ~ "--" ~ accessor_name, heading_level = accessor_heading_level %}
+{% include "docstring.html.jinja" with context %}
+{% endwith %}
+</section>
+{% endif %}
+{% endfor %}
+{% endif %}
+{% endblock docstring %}

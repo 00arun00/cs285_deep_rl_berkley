@@ -1,4 +1,21 @@
-"""Evaluation utilities for Push-T policies."""
+"""Measure policy performance and retain evaluated checkpoints.
+
+**Two different measurements**
+
+- [compute_validation_loss][hw1_imitation.evaluation.compute_validation_loss]
+  averages batch losses weighted by example count.
+- [evaluate_policy][hw1_imitation.evaluation.evaluate_policy] runs Push-T
+  rollouts and averages each episode's maximum reward, not its reward sum.
+
+Both temporarily use evaluation mode and restore the model's prior top-level
+training flag. Randomness is explicit: validation receives a generator, while
+rollouts derive separate indexed environment and policy streams.
+
+[save_checkpoint_and_retain][hw1_imitation.evaluation.save_checkpoint_and_retain]
+keeps the best K evaluated checkpoints plus the latest. Video paths and retained
+checkpoint records refer to experiment-owned files; callers manage their
+longer-term lifecycle.
+"""
 
 from __future__ import annotations
 
@@ -28,10 +45,17 @@ NUM_EVAL_EPISODES = 100
 
 @dataclass(frozen=True, slots=True)
 class EvaluationResults:
-    """Measurements and completed video paths from one evaluation.
+    """Record rollout scores and successfully completed video paths.
 
-    Paths refer to persistent files owned by the experiment.
-    Consumers may read them but do not acquire deletion ownership.
+    This frozen dataclass stores supplied values without validation. Consumers may
+    read the persistent video files but do not acquire deletion ownership.
+
+    Attributes:
+        mean_reward: Arithmetic mean of per-episode maximum rewards, as produced by
+            `evaluate_policy`. This is not mean cumulative episode return.
+        num_episodes: Number of completed rollout episodes included in the score.
+        video_paths: Paths appended only after their rollout and writer closure
+            succeeded. The tuple may be empty when recording is disabled.
     """
 
     mean_reward: float
@@ -41,11 +65,33 @@ class EvaluationResults:
 
 @dataclass(frozen=True, slots=True)
 class ValidationResults:
+    """Record an example-weighted validation loss and its sample count.
+
+    This frozen dataclass stores values without additional validation.
+
+    Attributes:
+        loss_mean: Sum of batch mean losses multiplied by batch sizes, divided by
+            the total number of examples.
+        examples_count: Total examples processed, including a smaller final batch.
+    """
     loss_mean: float
     examples_count: int
 
 
 def resize_frame(frame: np.ndarray, size: tuple[int, int]) -> np.ndarray:
+    """Resize an image array using PIL bilinear interpolation.
+
+    Args:
+        frame: Array accepted by `PIL.Image.fromarray`, normally an RGB render frame.
+            This helper does not validate a particular color layout or dtype.
+        size: Destination `(width, height)` passed directly to PIL.
+
+    Returns:
+        resized: NumPy representation of the resized image. Shape and dtype follow
+            the PIL image mode; callers should not assume the returned array is writable.
+
+    PIL conversion and size errors propagate. The input array is not modified.
+    """
     image = Image.fromarray(frame)
     resized = image.resize(size, resample=Image.Resampling.BILINEAR)
     return np.asarray(resized)
@@ -53,6 +99,17 @@ def resize_frame(frame: np.ndarray, size: tuple[int, int]) -> np.ndarray:
 
 @dataclass(frozen=True, slots=True)
 class CheckpointRecord:
+    """Track a saved checkpoint's score, local path, and optional remote artifact.
+
+    The record is frozen, but referenced files and remote artifacts have independent
+    lifetimes. Construction does not validate the score or check file existence.
+
+    Attributes:
+        score: Evaluation score used for retention; higher scores rank first.
+        path: Local checkpoint file managed by the retention helpers.
+        artifact: Uploaded W&B artifact handle, or `None` for local-only saving.
+            Cleanup uses the handle's normal alias-protection behavior.
+    """
     score: float
     path: Path
     artifact: wandb.Artifact | None = None
@@ -62,7 +119,27 @@ def prune_checkpoints(
     checkpoints: dict[int, CheckpointRecord],
     keep_steps: set[int],
 ) -> set[int]:
-    """Delete obsolete checkpoints; return steps whose cleanup failed."""
+    """Remove obsolete local and remote checkpoints, retaining failed cleanup records.
+
+    **Cleanup order**
+
+    1. Skip steps in `keep_steps` and unlink each other local path. Missing files
+       count as success.
+    2. Delete its W&B artifact, if present, without bypassing user-alias protection.
+    3. Remove the dictionary entry only after both operations succeed.
+
+    A local `OSError` or remote deletion exception is logged and leaves the entry
+    for retry. A remote failure can therefore leave a record whose local file is
+    already gone. The helper mutates the supplied dictionary, not a copy.
+
+    Args:
+        checkpoints: Mutable mapping of steps to experiment-owned checkpoint records.
+        keep_steps: Steps exempt from deletion; absent steps have no effect.
+
+    Returns:
+        pending: Steps whose local or remote cleanup failed on this pass. Retry
+            state remains in `checkpoints`; it is not persisted elsewhere.
+    """
     pending: set[int] = set()
     for step, record in list(checkpoints.items()):
         if step in keep_steps:
@@ -102,15 +179,46 @@ def save_checkpoint_and_retain(
     checkpoint_dir: Path,
     run: wandb.Run | None = None,
 ) -> set[int]:
-    """Save an evaluated policy and retain the best K plus latest.
+    """Save an evaluated policy and retain the best K checkpoints plus the latest.
 
-    Call once per evaluation with increasing steps and a fixed top_k.
-    Higher rewards win; ties favor later steps. Zero keeps only latest.
-    A supplied W&B run must be online; omit it for local-only saving.
+    Call once per evaluation with increasing steps and a fixed `top_k`. These
+    sequence requirements are caller obligations, not validated here.
 
-    When uploading, completion is confirmed before pruning. Cleanup failures are
-    logged and retried at later saves; save/upload errors propagate.
-    Returns pending cleanup steps. Retry state is not persisted across runs.
+    **Retention and failure behavior**
+
+    - Rank higher scores first; ties favor later steps. Always keep this call's
+      step. With `top_k == 0`, keep only that latest step.
+    - Save locally before uploading. For an online W&B run, wait for upload
+      completion before registering the record and pruning older versions.
+    - Move the `latest` alias on every upload; add `best` when `top_k > 0` and this
+      step ranks first. Use the same retained-step set locally and remotely.
+    - Save/upload failures propagate without rolling back the newly written local
+      file. Cleanup failures are logged and returned for retry on later calls.
+      Retry records are in-memory only.
+
+    Args:
+        model: Policy to checkpoint, kept stable while saving.
+        step: Current evaluation step used for ranking, dictionary keys, and filename.
+        normalizer: Matching training normalization statistics passed to `save_policy`.
+        flow_num_steps: Positive inference-step default passed to checkpoint saving.
+        mean_reward: Finite score for this checkpoint; larger is better.
+        top_k: Nonnegative integer number of highest-ranked steps to retain in
+            addition to the latest when it is not already among them. Only the
+            nonnegative bound is checked explicitly here.
+        checkpoints: Mutable retention history. Successful saves add a record;
+            successful pruning removes obsolete records.
+        checkpoint_dir: Directory for `policy_step_<step>.pt`; saving creates parents.
+        run: Online W&B run, or `None` for local-only saving.
+
+    Returns:
+        pending: Steps whose cleanup failed and remain tracked for future retries.
+
+    Raises:
+        ValueError: The supplied run is offline, `top_k` is negative, the score is
+            nonfinite, or checkpoint validation fails.
+
+    Filesystem, serialization, and upload errors propagate; cleanup errors are
+    handled separately by [prune_checkpoints][hw1_imitation.evaluation.prune_checkpoints].
     """
     if run is not None and run.offline:
         raise ValueError("Remote checkpoint retention requires online W&B.")
@@ -169,16 +277,40 @@ def compute_validation_loss(
     show_progress: bool = False,
     progress_position: int = 0,
 ) -> ValidationResults:
-    """Compute example-weighted loss using caller-owned randomness.
+    """Compute example-weighted validation loss without recording gradients.
 
-    The generator advances across batches and must match the sampling device.
-    To repeat validation noise across checkpoints, the caller should provide
-    a fresh generator with the same identity for each complete validation pass.
+    Temporarily call `eval()`, accumulate `batch_loss * batch_size`, and divide by
+    the total example count. This assumes the policy returns a scalar batch mean.
+    Input batches move to `device`; the model must already be placed compatibly.
 
-    Repeating noise also assumes unchanged batch order and sampling shapes.
-    The model's previous training mode is restored on exit.
+    **Randomness and mode**
+
+    - Reuse the supplied generator across batches. Stochastic policy losses consume
+      it even in evaluation mode; deterministic losses may leave it unchanged.
+    - To replay validation noise across checkpoints, supply a fresh generator with
+      the same identity, batch order, and sampling shapes for each complete pass.
+    - Restore the previous top-level training flag on normal or exceptional exit.
+      This recursively sets child modes, not arbitrary preexisting mixed child modes.
+
+    Args:
+        model: Policy returning scalar mean loss from `compute_loss`.
+        loader: Sized iterable of `(states, action_chunks)` batches with nonempty
+            batches expected. No custom batch-shape validation is performed.
+        device: Destination for validation tensors.
+        generator: Caller-owned generator matching the sampling device. State is
+            not restored after the pass, including a failed pass.
+        show_progress: Enable a temporary progress bar when the terminal supports it.
+        progress_position: Terminal row for the progress bar.
+
+    Returns:
+        results: Weighted loss and total processed example count. Loss finiteness
+            is not separately validated.
+
+    Raises:
+        ValueError: The loader produces no examples.
+
+    Policy and tensor-operation errors propagate without translation.
     """
-
     was_training = model.training
     model.eval()
 
@@ -248,45 +380,74 @@ def evaluate_policy(
     show_progress: bool = False,
     progress_position: int = 0,
 ) -> EvaluationResults:
-    """Run policy rollouts and return scores for Push-T state observations.
+    """Run Push-T rollouts and average their maximum observed rewards.
 
-    The score is the mean of per-episode maximum rewards.
+    **Rollout workflow**
 
-    Each episode index identifies an environment seed and a separate policy
-    generator. Repeated calls with the same root, stream IDs, and variations
-    recreate those episode identities.
+    1. Create one state-observation Push-T environment and put the policy in eval mode.
+    2. For each episode index, derive an environment seed and a fresh policy generator
+       from the selected independent streams and variations.
+    3. Normalize observations, sample without gradients, and denormalize actions.
+       Check action shape, horizon, and finiteness, then clip to the Box bounds.
+    4. Execute `chunk_size` actions before requesting another chunk, stopping at
+       environment termination or truncation.
 
-    The policy generator advances across action chunks within its episode.
-    Environment and policy variations can be changed independently.
+    The policy generator advances across chunks within an episode. Repeated calls
+    with the same identities recreate those episode streams; replay also depends
+    on unchanged environment/model behavior. The reported score is the mean of
+    per-episode maxima, not a sum of rewards.
 
-    Videos are streamed directly to the caller-provided directory.
-    A failed recording may leave a partial file, but its path is never
-    returned as a successful result.
+    **Ownership and cleanup**
 
-    This function owns and closes the environment. It restores the
-    model's previous top-level training mode on exit.
+    - Close the owned environment and restore the previous top-level model training
+      flag on exit, including failures. Child modes are recursively set by `train`;
+      mixed child-mode configurations are not individually restored.
+    - Record frames after environment steps (not the initial reset), at 20 fps,
+      to caller-owned paths `episode_<seven-digit index>.mp4`.
+      Names repeat across calls; use a distinct directory to preserve earlier videos.
+    - Add a video path only after rollout and writer closure succeed. Failures may
+      leave partial files and propagate rather than return partial results.
+
+    Environment, filesystem, encoding, and device errors propagate. Configuration
+    checks below are not a comprehensive type validator; stream-coordinate validation
+    is delegated to the factory and flow-step validation to the policy.
 
     Args:
-        model: Policy producing normalized action chunks.
-        normalizer: Observation and action normalization statistics.
-        device: Device used for policy inference.
-        chunk_size: Actions executed before requesting another chunk.
-        video_size: Recording dimensions as (width, height).
-        num_video_episodes: Initial episodes to record, capped by the
-            evaluation episode count. Use zero to disable recording.
-        flow_num_steps: Sampling steps for flow policies.
-        streams: Stateless factory supplying indexed episode randomness.
-        env_stream: Random stream identity for environment initialization.
-        policy_stream: Random stream identity for policy sampling.
-        env_variation: Realization of evaluation environment randomness.
-        policy_variation: Realization of evaluation policy randomness.
-        video_dir: Existing directory required when recording videos.
-        num_eval_episodes: Positive number of rollout episodes.
-        show_progress: Show a temporary bar on an interactive terminal.
-        progress_position: Terminal row assigned to the progress bar.
+        model: Policy producing normalized action chunks, already on `device`.
+        normalizer: State/action statistics used for inference. No upfront statistics
+            revalidation is performed by this helper.
+        device: Inference tensor and policy-generator device.
+        chunk_size: Positive number of actions executed before resampling. Must not
+            exceed the predicted horizon, but may be smaller.
+        video_size: `(width, height)` for recordings. Both must be positive and even
+            when recording; ignored when recording is disabled.
+        num_video_episodes: Nonnegative count of initial episodes to record, capped
+            by the evaluation count. Zero disables recording.
+        flow_num_steps: Integration steps forwarded to `sample_actions`; MSE ignores it.
+        streams: Stateless factory for indexed episode seeds and generators.
+        env_stream: Stream identity for environment reset seeds.
+        policy_stream: Separate stream identity for policy sampling.
+        env_variation: Realization coordinate for environment randomness.
+        policy_variation: Realization coordinate for policy randomness.
+        video_dir: Existing directory required when recording. Files remain owned
+            by the caller after this function returns.
+        num_eval_episodes: Positive integer number of episodes to run.
+        show_progress: Enable a temporary progress bar on supported terminals.
+        progress_position: Terminal row for the progress bar.
 
-    Invalid configuration raises ValueError or NotADirectoryError.
-    Environment, filesystem, and encoding errors propagate.
+    Returns:
+        results: Mean episode-maximum reward, completed episode count, and tuple of
+            successfully completed video paths. Reward finiteness is not checked.
+
+    Raises:
+        ValueError: Episode/chunk counts are nonpositive, video count is negative,
+            recording lacks a directory or valid dimensions, or predicted actions
+            have incompatible shape, insufficient horizon, or nonfinite values.
+            Invalid stream coordinates or flow steps can also fail in their owners.
+        NotADirectoryError: The requested recording directory does not exist or is
+            not a directory.
+        TypeError: The environment's action space is not a Box or rendering does not
+            return a NumPy array; delegated argument-type checks may also fail.
     """
     if num_eval_episodes <= 0:
         raise ValueError("num_eval_episodes must be positive")
