@@ -13,7 +13,7 @@ uv run --no-sync zensical serve
 uv run --no-sync zensical build --strict
 ```
 
-The site is written to `site/`. The documentation workflow runs the same strict build when docs, tooling, or documented Python source changes; it does not publish the site. Documentation dependencies are isolated from each training project's environment.
+The site is written to `site/`. Documentation CI runs the strict build and pilot checks on every PR, on pushes to `main`, and on published releases. A separate trusted workflow publishes successful artifacts. Documentation dependencies are isolated from each training project's environment.
 
 ## Add a page
 
@@ -98,6 +98,88 @@ source review and desktop/mobile interaction review remain required.
 
 ## Maintain the theme
 
-Navigation, search, code controls, and the light/dark toggle are native Zensical features. `docs/stylesheets/theme.css` customizes the palette, system font stacks, spacing, and borders. The shared mkdocstrings templates in `docs-overrides/python/material/` combine structured Python attribute docstrings with source annotations and defaults when `options.extra.documented_fields` is enabled. Generated modules enable this strategy globally; the preserved comparison page opts in locally. A small function wrapper omits synthesized methods without source lines and labels private methods. Parameter, return, and exception sections use native lists to remain readable on mobile. Other rendering remains native. There is no custom JavaScript.
+Navigation, search, code controls, and the light/dark toggle are native Zensical features. `docs/stylesheets/theme.css` customizes the palette, system font stacks, spacing, and borders. The shared mkdocstrings templates in `docs-overrides/python/material/` combine structured Python attribute docstrings with source annotations and defaults when `options.extra.documented_fields` is enabled. Generated modules enable this strategy globally; the preserved comparison page opts in locally. A small function wrapper omits synthesized methods without source lines and labels private methods. Parameter, return, and exception sections use native lists to remain readable on mobile. Other rendering remains native. `docs-theme/main.html` adds a build/channel announcement to published pages using the native announcement block. There is no custom JavaScript.
 
 Check both color modes and narrow screens when changing that stylesheet.
+
+## Publish documentation
+
+The public site uses GitHub Pages at
+`https://00arun00.github.io/cs285_deep_rl_berkley/`.
+
+| Path | Source | Lifecycle |
+| --- | --- | --- |
+| `/latest/` | Latest successful build of the current `main` commit | Updated after merges |
+| `/v1.0.0/` | Published release tag `v1.0.0` | Immutable snapshot |
+| `/stable/` | Highest published semantic release | Per-page redirects preserve deep links |
+| `/previews/pr-38/` | Successful PR build (GitHub's merge snapshot) | Updated while open; removed when closed |
+| `/` | Redirect to `/latest/` | Permanent entry point |
+
+The release workflow supports published, non-prerelease tags named
+`vMAJOR.MINOR.PATCH`. Merely pushing a tag does not publish docs: publish its
+GitHub Release. The tagged commit must contain the documentation build workflow
+and its locked tooling. Older versions remain available in the version selector;
+PR previews are excluded from that selector. Each published page identifies its
+channel and source commit. Preview pages carry `noindex, nofollow` metadata.
+
+### One-time setup and the first deployment
+
+1. In repository **Settings → Pages**, set **Source → GitHub Actions**.
+2. Enable Actions for this repository if GitHub disabled them when it was forked.
+3. In **Settings → Environments → github-pages**, restrict deployment branches to
+   `main`. The publishing workflow runs in the default-branch context even when
+   handling a release or PR build. No personal access token is required, and
+   default workflow token permissions may remain read-only.
+4. Merge the reviewed publishing workflow into `main`. The resulting main build
+   publishes `/latest/`. Before that merge, the infrastructure PR can validate
+   and upload its artifact but cannot trigger its own trusted publisher.
+5. Verify the **Publish documentation** run and the live site. Existing open PRs
+   need a new successful Documentation build or a manual publisher dispatch.
+
+The publishing workflow and scripts always come from `main`; it never checks
+out or executes PR or release source in its privileged job. The read-only build
+job uploads static output. The publisher validates the workflow/run, current PR
+head or release tag, metadata and archive paths before consuming it. A PR cannot
+choose its deployment directory. Pages publication is serialized with queued
+runs, and stale/closed PR builds are skipped. All output is retained on the
+machine-managed `gh-pages` branch; avoid editing that branch manually.
+
+### Approve an external-fork preview or retry publication
+
+PRs whose head branch lives in this repository publish automatically. The fact
+that this repository is itself a fork does not change that rule. External-fork
+builds are checked but are not automatically published: their HTML/JavaScript
+would otherwise be hosted on our Pages origin without review.
+
+After reviewing an external-fork PR:
+
+1. Open its successful **Documentation** run and copy the numeric run ID from
+   the URL (`.../actions/runs/123456789`).
+2. Open **Actions → Publish documentation → Run workflow**.
+3. Choose branch **main** and enter that run ID.
+
+This manual dispatch approves publication of that exact current PR head. A new
+push needs a new approval. Closed or outdated builds are rejected. A repository
+maintainer with permission to run workflows performs this approval; approving
+GitHub's fork *build* prompt alone does not approve publication.
+
+The same dispatch retries a failed publication for a successful main, release,
+or PR build. Artifacts expire after 14 days; rerun the build if its artifact has
+expired. Successful PR deployment updates one preview-link comment with the
+source SHA. Closing/merging the PR removes the preview and updates that comment.
+A failed deploy leaves the previous live site in place; the retained `gh-pages`
+state lets a retry finish publication. Re-running a release preserves its original
+bytes, and moving a published release tag is rejected rather than silently
+rewriting history. Restoring a deliberately removed preview requires a new build
+or an approved dispatch for a currently open PR.
+
+### Publishing implementation
+
+`mike` is pinned to the Zensical-compatible fork in the optional `publishing`
+dependency group. It manages the version inventory, aliases, redirects and git
+commits. `scripts/build_docs.py` supplies the URL prefix and announcement metadata,
+then runs the strict build and existing checker. `scripts/publish_docs.py` uses
+the pinned mike API to publish already-built files; it deliberately does not use
+`mike deploy`, which would execute a build in the privileged job. Updates to mike
+must revalidate that API. The publishing job alone receives branch-write, Pages,
+OIDC, artifact-read and PR-comment permissions.

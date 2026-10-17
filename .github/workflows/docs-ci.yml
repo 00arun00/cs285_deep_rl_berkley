@@ -2,37 +2,22 @@ name: Documentation
 
 on:
   pull_request:
-    paths:
-      - "docs/**"
-      - "docs-overrides/**"
-      - "scripts/check_docs.py"
-      - "hw1/src/**"
-      - "zensical.toml"
-      - "pyproject.toml"
-      - "uv.lock"
-      - ".github/workflows/docs-ci.yml"
   push:
     branches: [main]
-    paths:
-      - "docs/**"
-      - "docs-overrides/**"
-      - "scripts/check_docs.py"
-      - "hw1/src/**"
-      - "zensical.toml"
-      - "pyproject.toml"
-      - "uv.lock"
-      - ".github/workflows/docs-ci.yml"
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: docs-${{ github.event.pull_request.number || github.ref }}
+  group: docs-build-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
+    if: github.event_name != 'release' || !github.event.release.prerelease
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -43,9 +28,14 @@ jobs:
         with:
           version: "0.11.8"
           python-version: "3.13"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+          enable-cache: false
       - run: uv sync --locked
-      - run: uv run --no-sync zensical build --strict
       - run: uv tool install ruff==0.14.10
-      - run: uv run --no-sync python scripts/check_docs.py --report docs-coverage.json
+      - run: uv run --no-sync python scripts/build_docs.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: docs-site
+          path: docs-artifact/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14

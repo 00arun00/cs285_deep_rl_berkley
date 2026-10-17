@@ -5,3 +5,8 @@ codebook.toml
 /.venv/
 /site/
 /.cache/
+
+# Documentation publishing artifacts
+/docs-artifact/
+/docs-coverage.json
+/.docs-build-*.toml

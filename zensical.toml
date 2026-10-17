@@ -6,6 +6,7 @@ repo_name = "Source"
 extra_css = ["stylesheets/theme.css"]
 
 [project.theme]
+custom_dir = "docs-theme"
 variant = "modern"
 font = false
 features = ["navigation.tabs", "navigation.sections", "navigation.indexes", "navigation.top", "navigation.footer", "content.code.copy", "content.code.annotate", "content.tabs.link", "search.highlight"]

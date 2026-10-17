@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{%- block announce -%}
+{%- if config.extra.build_label -%}
+{{ config.extra.build_label }} · <a href="{{ config.repo_url }}/commit/{{ config.extra.build_sha }}">{{ config.extra.build_sha[:7] }}</a>
+{%- endif -%}
+{%- endblock -%}
