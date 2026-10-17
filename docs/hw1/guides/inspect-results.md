@@ -83,3 +83,5 @@ Inspect a few rollouts for missed contacts, unstable motion, and whether action 
 | Two runs disagree. | Exact settings, dataset, code revision, and variation across training seeds. |
 
 Use [metric interpretation](../concepts/evaluation.md) to avoid reading `mean_reward` as success rate or cumulative return. Before declaring an improvement, follow [fair comparisons](compare-experiments.md).
+
+For dataset, environment, configuration, or loading failures, continue to [Troubleshooting](../troubleshooting.md).

@@ -91,3 +91,5 @@ The command uses the same `hw1` working directory. Help displays the current fla
 | Temporary checkpoints remain | Inspect the exception; failures retain temporary checkpoints and cleanup errors can leave partial contents. |
 
 Keep the traceback when diagnosing a failure. Run the relevant [automated checks](tests-and-checks.md) to separate code regressions from data or environment issues.
+
+For more symptom-specific checks, see [Troubleshooting](troubleshooting.md).

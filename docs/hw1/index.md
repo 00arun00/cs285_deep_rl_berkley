@@ -83,3 +83,5 @@ For a first code reading, follow `train.py` → `data.py` → `model.py` → `ev
 - [Add a random stream](guides/add-random-stream.md).
 - [Change the checkpoint format](guides/change-checkpoint-format.md).
 - [Change or add a policy](guides/change-policy.md).
+
+For failures or unexpected behavior, use [Troubleshooting](troubleshooting.md) to choose a diagnostic path.

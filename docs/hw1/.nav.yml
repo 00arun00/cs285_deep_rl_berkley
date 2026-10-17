@@ -6,5 +6,6 @@ nav:
       - Tests and checks: tests-and-checks.md
   - Understand the system: concepts
   - Common tasks: guides
+  - Troubleshooting: troubleshooting.md
   - glob: "*"
     ignore_no_matches: true
