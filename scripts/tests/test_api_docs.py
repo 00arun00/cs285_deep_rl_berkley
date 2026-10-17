@@ -121,6 +121,36 @@ class Example:
 '''
 
 
+FIELD_FIXTURE = '''
+class Storage:
+    """Store runtime values.
+
+    Attributes:
+        saved: Constructor-assigned value.
+        left: Left tuple-assigned field.
+        right: Right tuple-assigned field.
+    """
+
+    def __init__(self, value=4):
+        self.saved = value
+        self.left, self.right = (2, 3)
+
+from dataclasses import dataclass
+
+@dataclass
+class Defaults:
+    """Represent declared dataclass fields.
+
+    Attributes:
+        required: Field with no declared default.
+        threshold: Field with a declared default.
+    """
+
+    required: int
+    threshold: int = 5
+'''
+
+
 class SharedRenderingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -128,8 +158,8 @@ class SharedRenderingTests(unittest.TestCase):
         cls.addClassCleanup(cls.directory.cleanup)
         root = Path(cls.directory.name)
         (root / 'docs').mkdir()
-        (root / 'fixture.py').write_text(textwrap.dedent(FIXTURE))
-        (root / 'docs/index.md').write_text('# Fixture\n\n::: fixture.Example\n')
+        (root / 'fixture.py').write_text(textwrap.dedent(FIXTURE)+textwrap.dedent(FIELD_FIXTURE))
+        (root / 'docs/index.md').write_text('# Fixture\n\n::: fixture.Example\n\n::: fixture.Storage\n\n::: fixture.Defaults\n')
         (root / 'zensical.toml').write_text(f'''[project]
 site_name = "API regression fixture"
 [project.markdown_extensions]
@@ -239,6 +269,34 @@ documented_fields = true
         self.assertEqual(self.html.count('id="fixture.Example.detailed"'), 1)
         self.assertNotIn('data-field="detailed"', self.html)
 
+    def field_row(self, name):
+        match = re.search(r'<section class="documented-field" data-field="'+name+r'"[^>]*>(.*?)</section>', self.html, re.S)
+        self.assertIsNotNone(match, name)
+        return match.group(1)
+
+    def test_unextracted_tuple_fields_keep_anchors_without_invented_metadata(self):
+        for name in ['left', 'right']:
+            row = self.field_row(name)
+            self.assertIn('tuple-assigned field.', row)
+            self.assertNotIn('documented-field__metadata', row)
+            self.assertEqual(self.html.count('id="fixture.Storage.'+name+'"'), 1)
+
+    def test_constructor_value_is_not_presented_as_default(self):
+        row = self.field_row('saved')
+        self.assertIn('<dt>Assigned value</dt>', row)
+        self.assertIn('<code>value</code>', row)
+        self.assertNotIn('<dt>Default</dt>', row)
+        self.assertNotIn('<dt>Type</dt>', row)
+
+    def test_dataclass_default_and_required_metadata_are_preserved(self):
+        row = self.field_row('threshold')
+        self.assertIn('<dt>Default</dt>', row)
+        self.assertIn('<code>5</code>', row)
+        self.assertNotIn('Assigned value', row)
+        row = self.field_row('required')
+        self.assertIn('<dt>Default</dt>', row)
+        self.assertIn('No default', row)
+
     def test_plain_field_retains_compact_presentation(self):
         self.assertIn('data-field="plain"', self.html)
         self.assertIn('Plain compact summary.', self.html)
@@ -341,12 +399,14 @@ class OutputCompletenessTests(unittest.TestCase):
 
 
 class AccessorIntegrationTests(unittest.TestCase):
-    def run_checker(self, setter_doc=None, setter_body='pass', deleter_doc='Remove the value.', deleter_body='pass', getter_doc=None):
+    def run_checker(self, setter_doc=None, setter_body='pass', deleter_doc='Remove the value.', deleter_body='pass', getter_doc=None, extra_attribute=None):
         if setter_doc is None:
             setter_doc = 'Set the value.\n\nArgs:\n    new_value (int): Replacement value.'
         if getter_doc is None:
             getter_doc = 'Read the value.\n\nReturns:\n    result (int): Current value.'
         source = 'class Example:\n    """A separately documented property.\n\n    Attributes:\n        value: Shared property summary.\n    """\n'
+        if extra_attribute:
+            source = source.replace('        value: Shared property summary.', '        value: Shared property summary.\n        '+extra_attribute+': Stale field.')
         for decorator, signature, doc, body in [
             ('property', 'value(self)', getter_doc, 'return 1'),
             ('value.setter', 'value(self, new_value)', setter_doc, setter_body),
@@ -437,6 +497,11 @@ api_root_uri = "api"
         code, report = self.run_checker(deleter_doc='')
         self.assertTrue(code)
         self.assertIn('Missing member docstring: value.deleter', report['errors'])
+
+    def test_fallback_does_not_hide_stale_attribute_from_checker(self):
+        code, report = self.run_checker(extra_attribute='ghost')
+        self.assertTrue(code)
+        self.assertIn('Stale attribute: ghost', report['errors'])
 
     def test_unresolved_accessor_does_not_fall_back_to_getter(self):
         source = 'class Example:\n    @property\n    def value(self):\n        return 1\n    @value.setter\n    def value(self, new_value):\n        pass\n'

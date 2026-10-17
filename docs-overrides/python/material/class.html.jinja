@@ -6,20 +6,25 @@
 <div class="documented-fields">
 {% for section in class.docstring.parsed if section.kind.value == "attributes" %}
 {% for entry in section.value %}
-{% if entry.name in class.attributes %}
-{% set field = class.attributes[entry.name] %}
-{% if documented.compact_field(field) %}
+{# A documented tuple-assigned instance field may be absent from Griffe.
+   Preserve its description/anchor; completeness reconciles names against AST. #}
+{% set field = class.attributes.get(entry.name) %}
+{% if not field or documented.compact_field(field) %}
+{% set field_path = field.path if field else class.path ~ "." ~ entry.name %}
 <section class="documented-field" data-field="{{ entry.name }}">
 <div class="documented-field__main">
-{% filter heading(heading_level + 1, role="attribute", id=field.path, class="doc doc-heading documented-field__name", toc_label=entry.name, skip_inventory=config.skip_local_inventory) %}<code>{{ entry.name }}</code>{% endfilter %}
-<div class="documented-field__description">{{ entry.description|convert_markdown(heading_level + 1, field.path, autoref_hook=AutorefsHook(field, config)) }}</div>
+{% filter heading(heading_level + 1, role="attribute", id=field_path, class="doc doc-heading documented-field__name", toc_label=entry.name, skip_inventory=config.skip_local_inventory) %}<code>{{ entry.name }}</code>{% endfilter %}
+<div class="documented-field__description">{{ entry.description|convert_markdown(heading_level + 1, field_path, autoref_hook=AutorefsHook(field or class, config)) }}</div>
 </div>
+{% if field %}
+{% set constructor = class.members.get("__init__") %}
+{% set assigned = constructor and constructor.lineno and constructor.endlineno and field.lineno and constructor.lineno <= field.lineno <= constructor.endlineno %}
 <dl class="documented-field__metadata">
 {% if field.annotation %}<div><dt>Type</dt><dd><code>{{ field.annotation }}</code></dd></div>{% endif %}
-{% if field.value is not none %}<div><dt>Default</dt><dd><code>{{ field.value }}</code></dd></div>{% else %}<div><dt>Default</dt><dd>No default</dd></div>{% endif %}
+{% if field.value is not none %}<div><dt>{{ "Assigned value" if assigned else "Default" }}</dt><dd><code>{{ field.value }}</code></dd></div>{% else %}<div><dt>Default</dt><dd>No default</dd></div>{% endif %}
 </dl>
-</section>
 {% endif %}
+</section>
 {% endif %}
 {% endfor %}
 {% endfor %}

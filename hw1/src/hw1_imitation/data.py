@@ -1,4 +1,27 @@
-"""Dataset utilities for Push-T."""
+"""Load demonstrations and turn episode-local windows into training samples.
+
+[`load_episodes_dataset`][hw1_imitation.data.load_episodes_dataset] reads the
+packed Push-T arrays into [`Episode`][hw1_imitation.data.Episode] objects,
+exposed through [`EpisodesDataset`][hw1_imitation.data.EpisodesDataset]. Use
+[`download_pusht`][hw1_imitation.data.download_pusht] first if the dataset is
+not already available locally.
+
+Split whole episodes into training and validation subsets. For a fresh run,
+fit [`Normalizer`][hw1_imitation.data.Normalizer] on the training subset; when
+initializing from a checkpoint, reuse its stored normalizer. Use the same
+statistics for validation and inference. Then build an
+[`EpisodeChunkDataset`][hw1_imitation.data.EpisodeChunkDataset] for each subset:
+it creates [`SingleEpisodeChunks`][hw1_imitation.data.SingleEpisodeChunks]
+children and combines their samples without crossing episode boundaries.
+Each sample pairs one state with a window of actions; optional padding
+repeats the episode's final action to complete short windows.
+
+Episode arrays can share backing storage. Construction marks the supplied
+arrays read-only, but writable aliases can still change their contents.
+Chunk datasets may borrow that storage, so keep source data unchanged while
+using them. Every sampled state/action pair contains independent float32
+tensors, even when the stored arrays are borrowed.
+"""
 
 from __future__ import annotations
 
@@ -76,15 +99,30 @@ def _load_pusht_zarr(zarr_path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarra
 
 @dataclass(frozen=True, slots=True)
 class Episode:
-    """State-action pairs from one demonstration.
+    """Store the aligned state-action arrays for one demonstration.
 
-    States and actions are aligned by timestep: states[t] is the state
-    associated with actions[t]. Both arrays must be nonempty, two-dimensional
-    float32 arrays with the same number of timesteps.
+    Each row pairs `states[t]` with `actions[t]`. Construct an episode from
+    nonempty two-dimensional float32 arrays with matching timestep counts.
+    Feature columns may be empty; finite values and `episode_id` are not
+    validated here.
 
     Construction marks the supplied array objects read-only without copying
-    their data. Writable aliases to the backing memory can still change the
-    values; this is a read-only interface, not deeply immutable storage.
+    their data. Frozen fields prevent rebinding, but writable aliases to the
+    backing memory can still change values. This is a read-only interface,
+    not deeply immutable storage. Keep the data unchanged while datasets use it.
+
+    Attributes:
+        episode_id: Caller-supplied identifier retained for dataset metadata.
+            It need not equal the episode's position in a collection.
+        states: State features with shape `(timesteps, state_dim)`, dtype
+            float32. The supplied array object becomes read-only.
+        actions: Actions with shape `(timesteps, action_dim)`, dtype float32.
+            The supplied array object becomes read-only.
+
+    Raises:
+        ValueError: Either array is not two-dimensional, timestep counts differ,
+            or there are no timesteps.
+        TypeError: Either array has a dtype other than float32.
     """
 
     episode_id: int
@@ -92,6 +130,17 @@ class Episode:
     actions: Float32Array  # shape: (timesteps, action_dim) - ReadOnly
 
     def __post_init__(self) -> None:
+        """Validate array shape and dtype, then mark both array objects read-only.
+
+        This dataclass lifecycle hook runs on construction. Validation finishes
+        before writeability flags are changed; no data is copied. Calling the hook
+        again repeats these checks and flag updates.
+
+        Raises:
+            ValueError: Arrays are not two-dimensional, have different timestep
+                counts, or contain no timesteps.
+            TypeError: States or actions do not use float32.
+        """
         if self.states.ndim != 2:
             raise ValueError(
                 f"states should have shape: (timesteps, state_dim) but got {self.states.shape}"
@@ -123,18 +172,67 @@ class Episode:
         self.actions.setflags(write=False)
 
     def __len__(self) -> int:
+        """Return the number of aligned timesteps in the episode.
+
+        Returns:
+            count: Number of rows in `states`, which matches `actions` after
+                successful construction.
+        """
         return len(self.states)
 
 
 # Needed wrapper for utilizing pytorch random_split()
 class EpisodesDataset(Dataset[Episode]):
+    """Expose an ordered collection of episodes as a PyTorch dataset.
+
+    Wrap episodes before using PyTorch's dataset utilities, such as
+    `random_split`. The wrapper stores the supplied tuple by reference and
+    returns the same episode objects. It performs no additional validation
+    or copying; an empty collection is allowed.
+
+    This implements the length and indexing interface of
+    [PyTorch Dataset](https://docs.pytorch.org/docs/stable/data.html#torch.utils.data.Dataset).
+    It indexes whole demonstrations, not training windows; use
+    [`EpisodeChunkDataset`][hw1_imitation.data.EpisodeChunkDataset] for windows.
+
+    Attributes:
+        episodes: The original ordered tuple of episode objects. Array ownership
+            and writeability remain those of each episode.
+    """
     def __init__(self, episodes: tuple[Episode, ...]):
+        """Retain the episode collection without validating or copying it.
+
+        Args:
+            episodes: Ordered tuple to expose through the dataset. Empty tuples are
+                valid; element types are assumed to match the annotation.
+        """
         self.episodes = episodes
 
     def __len__(self) -> int:
+        """Return the number of episodes in the stored collection.
+
+        Returns:
+            count: Length of `episodes`, including zero for an empty collection.
+        """
         return len(self.episodes)
 
     def __getitem__(self, idx: int) -> Episode:
+        """Delegate episode lookup to the stored tuple.
+
+        Args:
+            idx: Integer position, with negative indices counted from the end.
+                Although annotated for integer lookup, the implementation also
+                passes slices through to the tuple unchanged.
+
+        Returns:
+            episode: The same stored episode object for an integer index. A slice
+                returns a tuple of the original episode objects instead; no arrays
+                are copied.
+
+        Raises:
+            IndexError: An integer index is outside the tuple's bounds.
+            TypeError: The tuple rejects the index type.
+        """
         return self.episodes[idx]
 
 
@@ -531,20 +629,36 @@ def load_episodes_dataset(zarr_path: Path) -> EpisodesDataset:
 
 
 class SingleEpisodeChunks(Dataset[tuple[torch.Tensor, torch.Tensor]]):
-    """Expose one episode as current-state / future-action samples.
+    """Expose one episode as current-state and future-action training samples.
 
-    Each sample contains:
-        state: Shape (state_dim,).
-        actions: Shape (chunk_length, action_dim).
+    At timestep `t`, a sample pairs `states[t]` with actions beginning at `t`.
+    Without padding, only complete windows exist: the dataset length is
+    `max(0, timesteps - chunk_length + 1)`. With padding, every original timestep
+    is a valid start and windows past the end repeat the final action. Padding
+    does not create extra start positions.
 
-    Without padding, only complete chunks are available. With padding,
-    every timestep is available, repeating the final action as needed.
+    The constructor optionally normalizes all rows once, before padding. It
+    borrows the episode's arrays when no transformation is needed; normalization
+    allocates new state/action arrays and padding allocates a new action array.
+    Keep source episode arrays unchanged for this dataset's lifetime. Each
+    lookup returns independent float32 tensors, so mutating a returned sample
+    does not change later samples or source arrays.
 
-    Source episode arrays must remain unchanged for this dataset's lifetime.
-    Normalization and padding allocate new arrays when needed; otherwise,
-    the dataset borrows the episode's arrays.
+    This is a [PyTorch Dataset](https://docs.pytorch.org/docs/stable/data.html#torch.utils.data.Dataset).
+    Use [`EpisodeChunkDataset`][hw1_imitation.data.EpisodeChunkDataset] to combine
+    multiple episodes without windows crossing boundaries.
 
-    Returned tensors are independent copies.
+    Attributes:
+        _chunk_length: Implementation detail: positive number of actions in
+            each sample, retained from the constructor.
+        _length: Implementation detail: number of valid sample starts, computed
+            once from episode length, chunk length and padding mode.
+        _states: Implementation detail: state rows used for lookup. Borrowed
+            from the episode or independently computed by normalization.
+        _actions: Implementation detail: action rows used for windows. Borrowed
+            unless normalization or padding allocates a replacement array.
+        _episode_id: Implementation detail: original episode identifier exposed
+            by the `episode_id` property.
     """
 
     def __init__(
@@ -555,7 +669,27 @@ class SingleEpisodeChunks(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         pad_action_chunk: bool = False,
         normalizer: Normalizer | None = None,
     ) -> None:
-        """Set up one episode with normalization and padding."""
+        """Prepare episode-local windows, optionally normalizing and padding once.
+
+        The normalizer's dimensions are checked against the episode. Its statistics
+        are not revalidated for finite or positive values here. Padding repeats the
+        last action after normalization, if normalization was requested. Neither
+        source array is modified and the normalizer itself is not retained.
+
+        Args:
+            episode: Demonstration supplying aligned state/action arrays and its ID.
+            chunk_length: Positive Python integer specifying actions per window.
+                Boolean values are explicitly rejected.
+            pad_action_chunk: Whether to repeat the final action so every episode
+                timestep has a complete window.
+            normalizer: Statistics to apply to the episode's states and actions.
+                `None` leaves them in their original coordinates.
+
+        Raises:
+            TypeError: `chunk_length` is not a Python integer or is a boolean.
+            ValueError: `chunk_length` is not positive, or the normalizer's state
+                or action dimensions differ from the episode's.
+        """
         if isinstance(chunk_length, bool) or not isinstance(chunk_length, int):
             raise TypeError("chunk_length must be an integer")
         if chunk_length <= 0:
@@ -597,20 +731,39 @@ class SingleEpisodeChunks(Dataset[tuple[torch.Tensor, torch.Tensor]]):
 
     @property
     def state_dim(self) -> int:
-        """Number of features in each state."""
+        """Return the feature count of the prepared state rows.
+
+        Returns:
+            count: Number of columns in `_states`.
+        """
         return self._states.shape[1]
 
     @property
     def action_dim(self) -> int:
-        """Number of components in each action."""
+        """Return the feature count of the prepared action rows.
+
+        Returns:
+            count: Number of columns in `_actions`.
+        """
         return self._actions.shape[1]
 
     @property
     def episode_id(self) -> int:
+        """Return the original episode's identifier.
+
+        Returns:
+            identifier: Identifier copied from the episode during construction;
+                it is not inferred from an index or validated here.
+        """
         return self._episode_id
 
     def __len__(self) -> int:
-        """Return the number of valid chunk starts."""
+        """Return the number of valid window starts.
+
+        Returns:
+            count: Stored sample count. This can be zero when the episode is shorter
+                than the chunk length and padding is disabled.
+        """
         return self._length
 
     def __getitem__(
@@ -618,6 +771,25 @@ class SingleEpisodeChunks(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         index: int,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         # Handle -ve index : wrap around.
+        """Copy one current-state and action-window pair into float32 tensors.
+
+        Args:
+            index: Integer start position. Negative indices count from the end of
+                this dataset's valid starts; slices are not supported.
+
+        Returns:
+            sample: A pair containing a state tensor shaped `(state_dim,)` and an
+                action tensor shaped `(chunk_length, action_dim)`. Both are new
+                float32 tensors independent of stored arrays and other samples.
+                Coordinates are normalized only if a normalizer was supplied.
+
+        Raises:
+            IndexError: The index is outside `[-len(self), len(self))`; every index
+                fails when this dataset is empty. NumPy also raises IndexError for
+                unsupported scalar indices such as an in-range float.
+            TypeError: An index such as a slice cannot be compared with integers,
+                or an unsupported type reaches NumPy slicing.
+        """
         if index < 0:
             index += self._length
         if not 0 <= index < self._length:
@@ -635,14 +807,43 @@ class SingleEpisodeChunks(Dataset[tuple[torch.Tensor, torch.Tensor]]):
 
 
 class EpisodeChunkDataset(ConcatDataset[tuple[torch.Tensor, torch.Tensor]]):
-    """Combine episode-local windows into one indexed dataset.
+    """Concatenate episode-local training windows without crossing boundaries.
 
-    Each child handles one episode, so windows cannot cross episode
-    boundaries. ConcatDataset supplies length and global index routing.
+    Build one [`SingleEpisodeChunks`][hw1_imitation.data.SingleEpisodeChunks]
+    child for each episode, in input order. All children must share state and
+    action feature dimensions. Unpadded short episodes may contribute zero
+    samples, but at least one valid sample must remain across the collection.
 
-    Raises:
-        ValueError: No episodes are supplied, dimensions differ between children,
-            or no valid windows exist.
+    [PyTorch ConcatDataset](https://docs.pytorch.org/docs/stable/data.html#torch.utils.data.ConcatDataset)
+    supplies `__len__`, `__getitem__`, the child `datasets` collection and
+    cumulative index routing. These inherited implementations are not repeated
+    here. Valid negative indices count from the combined dataset's end;
+    an index below `-len(self)` raises `ValueError`, while a nonnegative index
+    at or above `len(self)` raises `IndexError` in the installed implementation.
+
+    Construction borrows source arrays or computes replacements as described
+    by `SingleEpisodeChunks`; it does not copy the input episodes wholesale.
+    Keep their source storage unchanged while the dataset is in use. Returned
+    state/action tensors are independent float32 copies.
+
+    Attributes:
+        _state_dim: Implementation detail: state feature count shared by all
+            children and exposed through `state_dim`.
+        _action_dim: Implementation detail: action feature count shared by all
+            children and exposed through `action_dim`.
+
+    Examples:
+        Fit statistics on the training subset, then construct normalized windows
+        from that same subset:
+
+        ```python
+        normalizer = Normalizer.from_episodes_data(training_episodes)
+        windows = EpisodeChunkDataset(
+            training_episodes, chunk_length=8, normalizer=normalizer,
+            pad_action_chunk=True,
+        )
+        state, actions = windows[0]
+        ```
     """
 
     def __init__(
@@ -653,6 +854,28 @@ class EpisodeChunkDataset(ConcatDataset[tuple[torch.Tensor, torch.Tensor]]):
         normalizer: Normalizer | None = None,
         pad_action_chunk: bool = False,
     ) -> None:
+        """Construct compatible child datasets and require a nonempty combined result.
+
+        Each child applies normalization and padding independently. Dimension
+        consistency is checked even for episodes that produce zero windows.
+        The original sequence is iterated once; the parent retains the child
+        datasets rather than the sequence itself.
+
+        Args:
+            episodes: Nonempty sequence or dataset of episodes in concatenation order.
+            chunk_length: Positive Python integer specifying actions per window.
+                Passed to every child; boolean values are rejected.
+            normalizer: Shared statistics applied to every child, or `None` for
+                original state/action coordinates. Feature dimensions must match.
+            pad_action_chunk: Whether each child repeats its own final action to
+                complete windows beginning near its end.
+
+        Raises:
+            ValueError: No episodes are supplied, episode dimensions disagree,
+                a child rejects the chunk length or normalizer dimensions, or no
+                valid windows remain after all children are constructed.
+            TypeError: A child rejects a non-integer or boolean chunk length.
+        """
         children = []
         expected_dimensions: tuple[int, int] | None = None
 
@@ -691,10 +914,18 @@ class EpisodeChunkDataset(ConcatDataset[tuple[torch.Tensor, torch.Tensor]]):
 
     @property
     def state_dim(self) -> int:
-        """State dimension shared by all child datasets."""
+        """Return the state feature count shared by every child dataset.
+
+        Returns:
+            count: State dimension recorded during construction.
+        """
         return self._state_dim
 
     @property
     def action_dim(self) -> int:
-        """Action dimension shared by all child datasets."""
+        """Return the action feature count shared by every child dataset.
+
+        Returns:
+            count: Action dimension recorded during construction.
+        """
         return self._action_dim

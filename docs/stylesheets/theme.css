@@ -238,3 +238,7 @@
   font-size: 1em;
   overflow-wrap: anywhere;
 }
+
+/* Unavailable extraction metadata stays absent; a sole value uses the full column. */
+.md-typeset .documented-field__main:only-child,
+.md-typeset .documented-field__metadata > div:only-child { grid-column: 1 / -1; }
