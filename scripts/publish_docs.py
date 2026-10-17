@@ -92,12 +92,19 @@ def resolve(repo, event, manual_run, artifact_root):
     if build["event"] == "pull_request":
         candidates = api(repo, f"commits/{sha}/pulls?per_page=100")
         candidates = [
-            p
-            for p in candidates
-            if p["head"]["sha"] == sha
-            and p["state"] == "open"
-            and p["base"]["ref"] == "main"
+            p for p in candidates if p["head"]["sha"] == sha and p["state"] == "open"
         ]
+        associated = {p["number"] for p in build.get("pull_requests", [])}
+        if associated:
+            candidates = [p for p in candidates if p["number"] in associated]
+        if len(candidates) > 1:
+            # Fork runs can omit pull_requests; use the artifact's bounded PR
+            # hint only among GitHub-verified open PRs at this exact head SHA.
+            download_artifact(repo, run_id, artifact_root)
+            hint = json.loads((artifact_root / "build.json").read_text())
+            candidates = [
+                p for p in candidates if hint.get("version") == f"pr-{p['number']}"
+            ]
         if len(candidates) != 1:
             print("Skip closed, stale or ambiguous PR run")
             return None
