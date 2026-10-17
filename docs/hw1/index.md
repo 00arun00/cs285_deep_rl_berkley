@@ -9,54 +9,28 @@ These guides assume you know Python, PyTorch, and basic supervised learning. Use
 1. **Prepare your environment:** follow the [HW1 setup instructions](setup.md). Use the `hw1/` working directory for HW1 commands.
 2. **Exercise the pipeline:** follow [Run a small local training test](test-runs.md). It explains output controls and remaining side effects. This is real training; it can download data and install dependencies.
 3. **Check a code change:** use the [tests and checks](tests-and-checks.md) for lint, formatting, and pytest commands.
-4. **Read or modify the implementation:** use the source map below, then consult the [Python reference](../reference/index.md) for signatures and detailed contracts.
+4. **Understand the architecture:** follow the [conceptual reading path](#understand-the-system) below, then use the source map and [Python reference](../reference/index.md) for implementation details.
 
 For an existing trained policy, start with [checkpoint loading and further training](guides/save-load-and-continue.md). Further training starts a fresh optimizer and run; it does not resume an interrupted training trajectory.
 
-## What you will work with
+## What is supported
 
-For the task, dataset, and supported representation, read [Push-T task and dataset](concepts/pusht.md).
+Training learns from recorded state–action pairs. Both supported policies predict an **action chunk**: a sequence of actions from one observation. `mse` predicts the chunk directly; `flow` transforms sampled noise into a chunk using a learned velocity field.
 
-Training uses recorded state–action pairs. The policy learns to predict the demonstrator's actions from the observed state. Environment interaction happens during evaluation; rollout rewards are used to select checkpoints, not as the training loss.
+Environment rollouts assess the learned behavior and select checkpoints. Validation loss measures demonstration fit; rollout scores measure behavior under the policy's own actions. Their definitions and interpretation belong in the [evaluation guide](concepts/evaluation.md).
 
-Both supported policies predict an **action chunk**: a sequence of actions from one observation. The fresh-model default is eight actions per chunk.
+## Understand the system
 
-| Policy | How it learns | How it produces actions |
-| --- | --- | --- |
-| `mse` (default) | Minimize mean squared error against demonstrated action chunks. | Predict an action chunk directly. |
-| `flow` | Learn a velocity field that transforms noise toward demonstrated action chunks. | Start with Gaussian noise and integrate the learned field over several steps. |
+Read the first four pages in order for the path from demonstrations to results. Use the final two when you need reproducibility or saved-policy details.
 
-See the [policy reference](../reference/policies.md) for interfaces and the [training configuration](../reference/training.md) for options and defaults.
-
-## Follow a run through the system
-
-Follow [demonstrations into training batches](concepts/data-pipeline.md), then explore the [training lifecycle](concepts/training-lifecycle.md).
-
-```mermaid
-flowchart TD
-    A[Recorded Push-T episodes] --> B[Split whole episodes]
-    B --> C[Training examples]
-    B --> D[Validation examples]
-    C --> E[Update policy]
-    E --> F[Measure validation loss]
-    D --> F
-    E --> G[Run Push-T rollouts]
-    G --> H[Select and retain checkpoints]
-    H --> I[Evaluate best retained checkpoint]
-```
-
-- **Preparation:** missing data may be downloaded. Fresh policies fit normalization on training episodes; both subsets become normalized state–action-chunk examples.
-- **During training:** validation measures fit to held-out demonstrations; rollout scores select checkpoints.
-- **At completion:** final evaluation uses separate random streams with the best retained checkpoint.
-
-Validation and rollout evaluation answer different questions:
-
-| Measurement | Question it answers |
+| Page | Question it answers |
 | --- | --- |
-| Validation loss | How well does the policy fit held-out demonstration examples under its training objective? |
-| Rollout score | How well does the policy perform when its own actions determine the next observations? |
-
-The reported rollout `mean_reward` averages each episode's **maximum reward**, not its cumulative reward. Lower validation loss alone does not establish better rollout performance. See [Evaluation and results](concepts/evaluation.md) for metric definitions and comparison limits.
+| [Push-T task and dataset](concepts/pusht.md) | What are the observations, actions, demonstrations, and supported policy families? |
+| [Demonstrations to training batches](concepts/data-pipeline.md) | How do episode splits, normalization, chunks, and padding create examples? |
+| [Training lifecycle](concepts/training-lifecycle.md) | How do optimization, monitoring, checkpoint selection, and final evaluation fit together? |
+| [Evaluation and results](concepts/evaluation.md) | What do the metrics mean, and how should comparisons account for variability? |
+| [Randomness and reproducibility](concepts/randomness.md) | Which identities and generator lifetimes control random draws? |
+| [Checkpoint format and lifecycle](concepts/checkpoints.md) | What survives saving, loading, retention, and cleanup? |
 
 ## Read the implementation
 
@@ -68,8 +42,8 @@ Implementation modules below are relative to `hw1/src/hw1_imitation/`; tests are
 | `data.py` | Demonstration episodes, normalization, and action-chunk datasets. |
 | `model.py` | MSE and flow policies, their losses, and action sampling. |
 | `evaluation.py` | Validation, environment rollouts, and checkpoint selection/retention. |
-| `checkpoint.py` | Saving and reconstructing a policy and its normalizer; see [Checkpoint format and lifecycle](concepts/checkpoints.md). |
-| `randomness.py`, `rng_modules.py` | Named random streams and layers that consume explicit generators; see [Randomness and reproducibility](concepts/randomness.md). |
+| `checkpoint.py` | Saving and reconstructing a policy and its normalizer. |
+| `randomness.py`, `rng_modules.py` | Named random streams and layers that consume explicit generators. |
 | `logging_utils.py`, `early_stopping.py` | Run outputs and stopping when rollout improvement stalls. |
 | `modal_train.py` | The optional remote-training entry point. |
 
@@ -79,7 +53,7 @@ For a first code reading, follow `train.py` → `data.py` → `model.py` → `ev
 
 - [Configure and compare experiments](guides/compare-experiments.md).
 - [Inspect results and diagnose a run](guides/inspect-results.md).
-- [Save, load, and continue training](guides/save-load-and-continue.md).
+- [Save, load, and train further](guides/save-load-and-continue.md).
 - [Add a random stream](guides/add-random-stream.md).
 - [Change the checkpoint format](guides/change-checkpoint-format.md).
 - [Change or add a policy](guides/change-policy.md).

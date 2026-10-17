@@ -1,6 +1,6 @@
 # The training lifecycle
 
-`train.py` coordinates data, optimization, monitoring, and checkpoint selection. It creates experiment outputs rather than returning a trained model. Start with the [small-run guide](../test-runs.md) for a runnable command and its side effects.
+[run_training][hw1_imitation.train.run_training] in `train.py` coordinates data, optimization, monitoring, and checkpoint selection. It creates experiment outputs rather than returning a trained model. Start with the [small-run guide](../test-runs.md) for a runnable command and its side effects.
 
 ## Before the first optimizer step
 
