@@ -1,6 +1,9 @@
 """Regression tests for shared API rendering and output completeness checks."""
 
 import ast
+import contextlib
+import io
+import json
 import html
 import importlib.util
 from pathlib import Path
@@ -10,6 +13,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from unittest.mock import patch
 
 import griffe
 
@@ -204,6 +208,114 @@ class OutputCompletenessTests(unittest.TestCase):
         issues, _ = self.check_method('yield 1', doc='Summary.\n\nYields:\n    item (int): Next item.')
         self.assertEqual(issues, [])
 
+
+class AccessorIntegrationTests(unittest.TestCase):
+    def run_checker(self, setter_doc=None, setter_body='pass', deleter_doc='Remove the value.', deleter_body='pass', getter_doc=None):
+        if setter_doc is None:
+            setter_doc = 'Set the value.\n\nArgs:\n    new_value (int): Replacement value.'
+        if getter_doc is None:
+            getter_doc = 'Read the value.\n\nReturns:\n    result (int): Current value.'
+        source = 'class Example:\n    """A separately documented property.\n\n    Attributes:\n        value: Shared property summary.\n    """\n'
+        for decorator, signature, doc, body in [
+            ('property', 'value(self)', getter_doc, 'return 1'),
+            ('value.setter', 'value(self, new_value)', setter_doc, setter_body),
+            ('value.deleter', 'value(self)', deleter_doc, deleter_body),
+        ]:
+            source += f'\n    @{decorator}\n    def {signature}:\n'
+            if doc:
+                source += textwrap.indent('"""'+doc+'\n"""\n', '        ')
+            source += textwrap.indent(body+'\n', '        ')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / 'hw1/src/hw1_imitation'
+            package.mkdir(parents=True)
+            (package/'__init__.py').write_text('')
+            (package/'data.py').write_text(source)
+            (root/'docs').mkdir()
+            (root/'docs/index.md').write_text('# Fixture\n')
+            (root/'zensical.toml').write_text(f'''[project]
+site_name = "Accessor integration"
+[project.plugins.mkdocstrings]
+custom_templates = "{ROOT / 'docs-overrides'}"
+[project.plugins.mkdocstrings.handlers.python]
+paths = ["hw1/src"]
+[project.plugins.mkdocstrings.handlers.python.options]
+allow_inspection = false
+show_root_heading = true
+show_source = false
+show_if_no_docstring = true
+show_docstring_attributes = false
+filters = []
+[project.plugins.mkdocstrings.handlers.python.options.extra]
+documented_fields = true
+[project.plugins.api-autonav]
+modules = ["hw1/src/hw1_imitation"]
+api_root_uri = "api"
+''')
+            build = subprocess.run([sys.executable, '-m', 'zensical', 'build', '--strict'], cwd=root, text=True, capture_output=True)
+            self.assertEqual(build.returncode, 0, build.stdout+build.stderr)
+            page = (root/'site/api/hw1_imitation/data/index.html').read_text()
+            self.assertEqual(page.count('id="hw1_imitation.data.Example.value"'), 1)
+            report_path = root/'report.json'
+            argv = ['check_docs.py', '--pilot', 'hw1_imitation.data.Example', '--ruff', 'ruff', '--report', str(report_path)]
+            # Isolate the external style tool only. Run real discovery, Griffe
+            # extraction, native HTML reconciliation and all completeness logic.
+            with patch.object(check_docs, 'ROOT', root), patch.object(check_docs, 'SOURCE', root/'hw1/src'), patch.object(sys, 'argv', argv), patch.object(check_docs.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '', '')), contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaises(SystemExit) as outcome:
+                    check_docs.main()
+            return outcome.exception.code, json.loads(report_path.read_text())
+
+    def test_correct_accessors_pass_full_checker(self):
+        code, report = self.run_checker()
+        self.assertFalse(code, report['errors'])
+        self.assertEqual(report['classes'][0]['members'], ['value.getter', 'value.setter', 'value.deleter'])
+
+    def test_getter_return_docs_are_not_borrowed_from_setter(self):
+        code, report = self.run_checker(
+            getter_doc='Read the value.',
+            setter_doc='Set the value.\n\nArgs:\n    new_value (int): Replacement value.\n\nReturns:\n    result (int): Setter result.',
+            setter_body='return 3',
+        )
+        self.assertTrue(code)
+        self.assertIn('Missing return description: value.getter', report['errors'])
+        self.assertNotIn('Missing return description: value.setter', report['errors'])
+
+    def test_setter_parameters_use_setter_docs(self):
+        code, report = self.run_checker(setter_doc='Set the value.\n\nArgs:\n    obsolete (int): Stale parameter.')
+        self.assertTrue(code)
+        self.assertIn('Missing parameter: value.setter.new_value', report['errors'])
+        self.assertIn('Stale parameter: value.setter.obsolete', report['errors'])
+
+    def test_setter_missing_docs_are_not_borrowed(self):
+        code, report = self.run_checker(setter_doc='')
+        self.assertTrue(code)
+        self.assertIn('Missing member docstring: value.setter', report['errors'])
+        self.assertIn('Missing parameter: value.setter.new_value', report['errors'])
+
+    def test_setter_return_docs_are_not_borrowed_from_getter(self):
+        code, report = self.run_checker(setter_body='return 3')
+        self.assertTrue(code)
+        self.assertIn('Missing return description: value.setter', report['errors'])
+
+    def test_deleter_return_docs_are_not_borrowed_from_getter(self):
+        code, report = self.run_checker(deleter_body='return 3')
+        self.assertTrue(code)
+        self.assertIn('Missing return description: value.deleter', report['errors'])
+
+    def test_deleter_missing_docs_are_identified(self):
+        code, report = self.run_checker(deleter_doc='')
+        self.assertTrue(code)
+        self.assertIn('Missing member docstring: value.deleter', report['errors'])
+
+    def test_unresolved_accessor_does_not_fall_back_to_getter(self):
+        source = 'class Example:\n    @property\n    def value(self):\n        return 1\n    @value.setter\n    def value(self, new_value):\n        pass\n'
+        node = ast.parse(source).body[0].body[-1]
+        module = griffe.visit('fixture', filepath=Path('fixture.py'), code=source, docstring_parser=griffe.Parser.google)
+        module['Example.value'].setter = None
+        member, label, issue = check_docs.resolve_own_member(module['Example'], node)
+        self.assertIsNone(member)
+        self.assertEqual(label, 'value.setter')
+        self.assertIn('Cannot resolve own member documentation', issue)
 
 if __name__ == '__main__':
     unittest.main()

@@ -64,6 +64,29 @@ def documented(obj, kind):
     return result
 
 
+def resolve_own_member(class_object, method):
+    """Match an AST method to its own Griffe docs, including property accessors.
+
+    A property is stored as one Attribute with the getter documentation, plus
+    optional setter/deleter Functions. Never substitute getter docs when an
+    accessor cannot be matched. Source spans also reject inherited or aliased
+    metadata that does not describe this explicit method definition.
+    """
+    accessor = next((decorator.attr for decorator in method.decorator_list
+                     if isinstance(decorator, ast.Attribute)
+                     and decorator.attr in {'getter', 'setter', 'deleter'}), None)
+    is_property = any(ast.unparse(decorator) in {'property', 'builtins.property'}
+                      for decorator in method.decorator_list)
+    label = method.name + ('.'+accessor if accessor else '.getter' if is_property else '')
+    member = class_object.members.get(method.name)
+    if member is not None and not member.is_alias and accessor in {'setter', 'deleter'}:
+        member = getattr(member, accessor, None)
+    start = min([method.lineno, *[decorator.lineno for decorator in method.decorator_list]])
+    if member is None or member.is_alias or member.lineno not in range(start, method.end_lineno + 1):
+        return None, label, 'Cannot resolve own member documentation: '+label
+    return member, label, None
+
+
 def output_doc_issues(method, member):
     """Check documented outputs from annotations and the method's own syntax.
 
@@ -165,21 +188,28 @@ def main():
             for name in sorted(attrs.keys()-fields-property_names): issues.append('Stale attribute: '+name)
             for name, desc in attrs.items():
                 if not desc.strip(): issues.append('Empty attribute description: '+name)
+            member_labels = []
             for method in methods:
-                if not (ast.get_docstring(method) or "").strip(): issues.append('Missing member docstring: '+method.name)
-                member=obj[method.name]; params=documented(member,'parameters')
+                member, label, resolution_issue = resolve_own_member(obj, method)
+                member_labels.append(label)
+                if not (ast.get_docstring(method) or "").strip(): issues.append('Missing member docstring: '+label)
+                if resolution_issue:
+                    issues.append(resolution_issue)
+                    report['exceptions'].append({'path': path+'.'+label, 'reason': 'Native accessor metadata could not be matched to its own source; manual review required'})
+                    continue
+                params=documented(member,'parameters')
                 output_issues, output_ambiguities = output_doc_issues(method, member)
-                issues.extend(output_issues)
-                report['exceptions'].extend({'path': path+'.'+method.name, 'reason': reason} for reason in output_ambiguities)
-                for name in sorted(parameters(method)-params.keys()): issues.append('Missing parameter: '+method.name+'.'+name)
-                for name in sorted(params.keys()-parameters(method)): issues.append('Stale parameter: '+method.name+'.'+name)
+                issues.extend(issue.replace(': '+method.name, ': '+label) for issue in output_issues)
+                report['exceptions'].extend({'path': path+'.'+label, 'reason': reason} for reason in output_ambiguities)
+                for name in sorted(parameters(method)-params.keys()): issues.append('Missing parameter: '+label+'.'+name)
+                for name in sorted(params.keys()-parameters(method)): issues.append('Stale parameter: '+label+'.'+name)
                 for name,desc in params.items():
-                    if not desc.strip(): issues.append('Empty parameter: '+method.name+'.'+name)
+                    if not desc.strip(): issues.append('Empty parameter: '+label+'.'+name)
             expected={path, *[path+'.'+n.name for n in methods], *[path+'.'+name for name in fields]}
             missing=sorted(expected-native)
             # Native renderer may omit undocumented instance assignments elsewhere;
             # report those separately, enforce complete pilot rendering.
-            row={'path':path,'file':str(file.relative_to(ROOT)), 'members':[n.name for n in methods], 'attributes':sorted(fields), 'issues':issues,'missing_rendered_anchors':missing}
+            row={'path':path,'file':str(file.relative_to(ROOT)), 'members':member_labels, 'attributes':sorted(fields), 'issues':issues,'missing_rendered_anchors':missing}
             report['classes'].append(row)
             if path not in native: report['errors'].append('Native discovery omitted class: '+path)
             if path == args.pilot:
