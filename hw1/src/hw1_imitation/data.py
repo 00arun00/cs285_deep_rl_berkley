@@ -45,11 +45,32 @@ Float32Array: TypeAlias = NDArray[np.float32]
 
 
 def download_pusht(dataset_dir: Path) -> Path:
-    """Download and extract the Push-T dataset if needed.
+    """Download the Push-T archive when needed and extract it locally.
 
-    Returns the path to the extracted Zarr dataset.
+    **Cache behavior**
+
+    1. Create `dataset_dir` and check the expected Zarr path.
+    2. If that path exists, return immediately without validating its type or data.
+    3. Otherwise reuse an existing `pusht.zip`, or download it from `PUSHT_URL`,
+       then extract the archive into `dataset_dir`.
+
+    This helper does not validate archive contents, verify a checksum, or repair
+    partial downloads. Download/extraction failures propagate and may leave partial
+    files; neither the archive nor extracted data is removed afterward.
+
+    Args:
+        dataset_dir: Root directory for the cached ZIP and extracted dataset.
+
+    Returns:
+        zarr_path: Expected extracted Zarr path under `dataset_dir`. Its existence
+            or validity is not checked again after extraction.
+
+    Raises:
+        OSError: Directory creation, download, or file access fails.
+        zipfile.BadZipFile: The cached or downloaded archive is not a valid ZIP.
+
+    Other network and extraction errors propagate from their underlying libraries.
     """
-
     dataset_dir.mkdir(parents=True, exist_ok=True)
     zarr_path = dataset_dir / ZARR_RELATIVE_PATH
     # check if the final extracted path exists
@@ -70,18 +91,28 @@ def download_pusht(dataset_dir: Path) -> Path:
 
 
 def _load_pusht_zarr(zarr_path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """[Helper] Load packed Push-T arrays from a Zarr dataset into memory.
+    """Materialize packed Push-T arrays from a Zarr group (implementation detail).
+
+    Open the group read-only and load `data/state`, `data/action`, and
+    `meta/episode_ends`. Convert these to NumPy arrays in memory; returned arrays
+    are not live views into the Zarr store. Shape and episode-boundary checks are
+    performed later by the episode-construction helper.
 
     Args:
-        zarr_path: Path to the extracted Push-T Zarr group.
+        zarr_path: Extracted Push-T Zarr group to open.
 
     Returns:
-        States and actions as float32 arrays, followed by exclusive episode
-        end offsets as an int64 array. States and actions concatenate all
-        episodes along their first axis.
+        states: Float32 array of concatenated state rows across all episodes.
+        actions: Float32 array of concatenated action rows across all episodes.
+        episode_ends: Int64 array of exclusive episode-end offsets. Conversion to
+            int64 occurs here, before subsequent boundary validation.
 
-    The Zarr group is opened read-only. The returned NumPy arrays are
-    materialized in memory; they are not live views into the Zarr store.
+    Raises:
+        KeyError: A required array path is missing from the group.
+        AssertionError: A required object is not a `zarr.Array`, when Python
+            assertions are enabled.
+
+    Zarr storage and NumPy conversion errors propagate.
     """
     root = zarr.open_group(zarr_path, mode="r")
     states_array = root["data/state"]
@@ -510,6 +541,22 @@ class Normalizer:
         """
 
         def to_array(name: str) -> np.ndarray:
+            """Copy one checkpoint tensor into an independent NumPy array.
+
+            This function-local helper detaches the tensor, moves it to CPU, converts it
+            to NumPy, and copies the result. It does not itself validate statistics.
+
+            Args:
+                name: Required key in the enclosing checkpoint `state` mapping.
+
+            Returns:
+                array: Independent NumPy storage with the converted tensor's shape and dtype.
+
+            Raises:
+                KeyError: The requested entry is missing.
+                TypeError: The tensor dtype or layout cannot be converted to NumPy.
+                RuntimeError: PyTorch rejects a device transfer or tensor conversion.
+            """
             return state[name].detach().cpu().numpy().copy()
 
         return cls(
@@ -577,26 +624,28 @@ def _get_episodes_from_packed_data(
     actions: Float32Array,
     episode_ends: NDArray[np.int64],
 ) -> tuple[Episode, ...]:
-    """[Helper] Expose packed state-action arrays as read-only episode views.
+    """Expose packed data as read-only episode views (implementation detail).
+
+    Validate exclusive boundaries, then slice arrays in source order and assign
+    zero-based episode IDs. Each `Episode` validates its slice and marks that view
+    read-only. The input arrays' own writeability flags are not changed; writable
+    aliases can still mutate shared backing data.
 
     Args:
-        states: Concatenated states with shape (total_timesteps, state_dim).
-        actions: Concatenated actions with shape
-            (total_timesteps, action_dim).
-        episode_ends: Nonempty, one-dimensional integer array of exclusive
-            end offsets. Offsets must be positive, strictly increasing,
-            and end at total_timesteps.
+        states: Float32 states shaped `(total_timesteps, state_dim)`.
+        actions: Float32 actions shaped `(total_timesteps, action_dim)`.
+        episode_ends: Nonempty one-dimensional integer array. Offsets must be
+            positive, strictly increasing, and end at `total_timesteps`.
 
     Returns:
-        Episodes in source order, with IDs assigned from zero. Their arrays
-        share memory with the inputs; numerical data is not copied.
+        episodes: Tuple of episodes in source order, sharing numerical storage with
+            the input arrays. No per-episode data copy is made.
 
     Raises:
-        ValueError: Array shapes, lengths, or episode boundaries are invalid.
-        TypeError: Episode boundaries are not integers, or states/actions
-            do not use float32.
+        ValueError: Packed lengths differ, boundary rank/order/coverage is invalid,
+            or an episode's shape or timestep count is invalid.
+        TypeError: Boundary dtype is not integer or episode arrays are not float32.
     """
-
     if len(states) != len(actions):
         raise ValueError("packed states and actions must have equal lengths")
 
@@ -629,21 +678,29 @@ def _get_episodes_from_packed_data(
 
 
 def load_episodes_dataset(zarr_path: Path) -> EpisodesDataset:
-    """Load Push-T demonstrations as read-only episodes.
+    """Load Push-T arrays once and expose them as read-only episode views.
+
+    Materialize the full state/action data, split it at validated episode ends,
+    and wrap the resulting episodes in `EpisodesDataset`. Slices retain the backing
+    arrays after this function returns, avoiding per-episode copies.
+
+    Ordinary writes through episode arrays are rejected. This protects against
+    accidental mutation, not changes through other writable aliases.
 
     Args:
-        zarr_path: Path to the extracted Push-T Zarr group.
+        zarr_path: Extracted Push-T Zarr group containing packed states, actions,
+            and exclusive episode-end offsets.
 
     Returns:
-        EpisodesDataset: pytorch dataset containing Episodes
+        dataset: Dataset of episodes in source order, with zero-based episode IDs
+            and shared backing arrays.
 
-    The full state-action dataset is loaded into memory once. Episodes
-    share those backing arrays through slices, avoiding per-episode data
-    copies. The views keep their backing storage alive after this function
-    returns.
+    Raises:
+        ValueError: Loaded shapes, lengths, or episode boundaries fail validation.
+        TypeError: Episode arrays or boundary dtype fail the downstream checks.
+        KeyError: A required Zarr array path is absent.
 
-    Ordinary writes through episode arrays are rejected. This is protection
-    against accidental mutation, not a guarantee of deep immutability.
+    Storage/conversion errors and the helper's enabled type assertions propagate.
     """
     states, actions, episode_ends = _load_pusht_zarr(zarr_path=zarr_path)
     # Basic slices share storage; Episode makes these slices read-only.
