@@ -242,3 +242,22 @@
 /* Unavailable extraction metadata stays absent; a sole value uses the full column. */
 .md-typeset .documented-field__main:only-child,
 .md-typeset .documented-field__metadata > div:only-child { grid-column: 1 / -1; }
+
+/* Expressions over 48 characters use full-width metadata; preserve code tokens. */
+.md-typeset .documented-field--long-value {
+  grid-template-columns: minmax(0, 1fr);
+  gap: .7rem;
+}
+.md-typeset .documented-field--long-value .documented-field__metadata {
+  grid-template-columns: minmax(0, 1fr);
+}
+.md-typeset .documented-field--long-value .documented-field__value dd {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.md-typeset .documented-field--long-value .documented-field__value code {
+  white-space: pre-wrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}

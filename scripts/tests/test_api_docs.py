@@ -127,12 +127,14 @@ class Storage:
 
     Attributes:
         saved: Constructor-assigned value.
+        long_assigned: Long constructor expression.
         left: Left tuple-assigned field.
         right: Right tuple-assigned field.
     """
 
     def __init__(self, value=4):
         self.saved = value
+        self.long_assigned = ("long_assigned_first_identifier", "long_assigned_second_identifier")
         self.left, self.right = (2, 3)
 
 from dataclasses import dataclass
@@ -144,10 +146,14 @@ class Defaults:
     Attributes:
         required: Field with no declared default.
         threshold: Field with a declared default.
+        schema: Long declared tuple.
+        unbroken: Long unbroken literal.
     """
 
     required: int
     threshold: int = 5
+    schema: tuple[str, ...] = ("global_step", "loss_window_mean", "window_examples_count")
+    unbroken: str = "this_is_one_deliberately_unbroken_value_longer_than_a_mobile_viewport_without_spaces"
 '''
 
 
@@ -291,7 +297,7 @@ documented_fields = true
         self.assertNotIn('data-field="detailed"', self.html)
 
     def field_row(self, name):
-        match = re.search(r'<section class="documented-field" data-field="'+name+r'"[^>]*>(.*?)</section>', self.html, re.S)
+        match = re.search(r'<section class="documented-field(?: documented-field--long-value)?" data-field="'+name+r'"[^>]*>(.*?)</section>', self.html, re.S)
         self.assertIsNotNone(match, name)
         return match.group(1)
 
@@ -329,6 +335,21 @@ documented_fields = true
                 self.assertEqual(self.html.count('id="fixture.'+class_name+'.'+member+'"'), 1)
         self.assertIn('<dt>Default</dt>', self.field_row('plain'))
         self.assertNotIn('<dt>Value</dt>', self.field_row('plain'))
+
+    def test_long_values_get_generic_full_width_hook_without_changing_text(self):
+        for name, owner, label, value in [
+            ('schema', 'Defaults', 'Default', "('global_step', 'loss_window_mean', 'window_examples_count')"),
+            ('long_assigned', 'Storage', 'Assigned value', "('long_assigned_first_identifier', 'long_assigned_second_identifier')"),
+            ('unbroken', 'Defaults', 'Default', "'this_is_one_deliberately_unbroken_value_longer_than_a_mobile_viewport_without_spaces'"),
+        ]:
+            with self.subTest(name=name):
+                self.assertIn('class="documented-field documented-field--long-value" data-field="'+name+'"', self.html)
+                row = self.field_row(name)
+                self.assertIn('<dt>'+label+'</dt>', row)
+                self.assertIn(value, html.unescape(re.sub('<[^>]+>', '', row)))
+                self.assertEqual(self.html.count('id="fixture.'+owner+'.'+name+'"'), 1)
+        for name in ['plain', 'threshold', 'saved', 'FIRST']:
+            self.assertIn('class="documented-field" data-field="'+name+'"', self.html)
 
     def test_plain_field_retains_compact_presentation(self):
         self.assertIn('data-field="plain"', self.html)
