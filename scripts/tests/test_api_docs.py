@@ -5,6 +5,7 @@ import contextlib
 import io
 import json
 import html
+from html.parser import HTMLParser
 import importlib.util
 from pathlib import Path
 import re
@@ -13,6 +14,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+import zlib
 from unittest.mock import patch
 
 import griffe
@@ -46,6 +48,10 @@ class Example:
     def count(self):
         """Compute the current count.
 
+        ## Notes
+
+        Getter heading details.
+
         Returns:
             count (int): Native property return details.
 
@@ -58,6 +64,60 @@ class Example:
             ```
         """
         return 3
+
+    @count.setter
+    def count(self, new_value: int):
+        """Replace the stored count.
+
+        ## Notes
+
+        Setter heading details.
+
+        Args:
+            new_value: Setter replacement parameter details.
+
+        Returns:
+            result (int): Setter result details.
+
+        Raises:
+            ValueError: Setter exception details.
+
+        Examples:
+            ```python
+            instance.count = 7
+            ```
+        """
+        return new_value
+
+    @count.deleter
+    def count(self):
+        """Clear the stored count.
+
+        ## Notes
+
+        Deleter heading details.
+
+        Returns:
+            result (int): Deleter result details.
+
+        Raises:
+            RuntimeError: Deleter exception details.
+
+        Examples:
+            ```python
+            del instance.count
+            ```
+        """
+        return 0
+
+    @property
+    def readonly(self):
+        """Read-only property details.
+
+        Returns:
+            result (int): Read-only result details.
+        """
+        return 4
 '''
 
 
@@ -95,12 +155,83 @@ documented_fields = true
             raise AssertionError(result.stdout + result.stderr)
         cls.html = (root / 'site/index.html').read_text()
         cls.text = html.unescape(re.sub('<[^>]+>', '', cls.html))
+        cls.inventory = zlib.decompress((root/'site/objects.inv').read_bytes().split(b'\n', 4)[4]).decode()
 
     def test_property_keeps_native_sections_and_class_summary(self):
         for text in ['Class-level property summary.', 'Compute the current count.', 'Native property return details.', 'Native property exception details.', 'instance.count']:
             with self.subTest(text=text): self.assertIn(text, self.text)
         self.assertEqual(self.html.count('id="fixture.Example.count"'), 1)
         self.assertNotIn('data-field="count"', self.html)
+
+    def accessor_text(self, kind):
+        match = re.search(r'<section class="doc-property-accessor" data-accessor="'+kind+r'" data-property="fixture.Example.count"[^>]*>(.*?)</section>', self.html, re.S)
+        self.assertIsNotNone(match, 'Missing '+kind+' section')
+        return html.unescape(re.sub('<[^>]+>', '', match.group(1)))
+
+    def test_setter_sections_render_inside_setter_container(self):
+        text = self.accessor_text('setter')
+        for marker in ['Setter', 'Replace the stored count.', 'new_value', 'Setter replacement parameter details.', 'Setter result details.', 'Setter exception details.', 'instance.count = 7']:
+            with self.subTest(marker=marker): self.assertIn(marker, text)
+        self.assertNotIn('Clear the stored count.', text)
+
+    def test_deleter_sections_render_inside_deleter_container(self):
+        text = self.accessor_text('deleter')
+        for marker in ['Deleter', 'Clear the stored count.', 'Deleter result details.', 'Deleter exception details.', 'del instance.count']:
+            with self.subTest(marker=marker): self.assertIn(marker, text)
+        self.assertNotIn('Replace the stored count.', text)
+
+    def test_accessors_keep_one_canonical_property_inventory_entry(self):
+        entries = [line for line in self.inventory.splitlines() if line.split()[0] == 'fixture.Example.count']
+        self.assertEqual(len(entries), 1, entries)
+        self.assertEqual(self.html.count('id="fixture.Example.count"'), 1)
+        self.assertNotIn('fixture.Example.count.setter ', self.inventory)
+        self.assertNotIn('fixture.Example.count.deleter ', self.inventory)
+
+    def test_accessor_markdown_headings_have_distinct_namespaces(self):
+        ids = re.findall(r'id="(fixture\.Example\.count[^"]*notes[^"]*)"', self.html)
+        self.assertEqual(len(ids), 3, ids)
+        self.assertEqual(len(set(ids)), 3, ids)
+        self.assertTrue(any('--setter' in value for value in ids), ids)
+        self.assertTrue(any('--deleter' in value for value in ids), ids)
+
+    def test_accessor_toc_has_distinct_parents_for_inner_headings(self):
+        class TocParser(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.parents, self.links = [], []
+
+            def handle_starttag(self, tag, attributes):
+                attrs = dict(attributes)
+                if tag == 'nav':
+                    self.parents.append(attrs.get('aria-label'))
+                elif tag == 'a' and 'md-nav__link' in attrs.get('class', '').split():
+                    self.links.append((attrs.get('href'), self.parents[-1] if self.parents else None))
+
+            def handle_endtag(self, tag):
+                if tag == 'nav': self.parents.pop()
+
+        toc = TocParser()
+        toc.feed(self.html)
+        expected = {
+            '#fixture.Example.count--setter': 'count',
+            '#fixture.Example.count--deleter': 'count',
+            '#fixture.Example.count--setter--notes': 'Setter',
+            '#fixture.Example.count--deleter--notes': 'Deleter',
+        }
+        for href, parent in expected.items():
+            with self.subTest(href=href):
+                self.assertEqual({label for target, label in toc.links if target == href}, {parent})
+        targets = [target for target, _ in toc.links]
+        self.assertLess(targets.index('#fixture.Example.count--setter'), targets.index('#fixture.Example.count--setter--notes'))
+        self.assertLess(targets.index('#fixture.Example.count--setter--notes'), targets.index('#fixture.Example.count--deleter'))
+        self.assertNotIn('fixture.Example.count--setter ', self.inventory)
+        self.assertNotIn('fixture.Example.count--deleter ', self.inventory)
+
+    def test_readonly_property_has_no_accessor_sections(self):
+        self.assertIn('Read-only property details.', self.text)
+        self.assertIn('Read-only result details.', self.text)
+        self.assertEqual(self.html.count('id="fixture.Example.readonly"'), 1)
+        self.assertNotIn('data-property="fixture.Example.readonly"', self.html)
 
     def test_detailed_field_keeps_own_documentation_and_class_summary(self):
         for text in ['Class-level detailed field summary.', 'Independent field documentation.', 'instance.detailed']:
