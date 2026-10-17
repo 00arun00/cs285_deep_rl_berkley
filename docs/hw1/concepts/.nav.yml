@@ -1,0 +1,9 @@
+nav:
+  - Push-T task and dataset: pusht.md
+  - Demonstrations to batches: data-pipeline.md
+  - Training lifecycle: training-lifecycle.md
+  - Evaluation and results: evaluation.md
+  - Randomness and reproducibility: randomness.md
+  - Checkpoint format and lifecycle: checkpoints.md
+  - glob: "*"
+    ignore_no_matches: true
