@@ -567,5 +567,298 @@ api_root_uri = "api"
         self.assertEqual(label, 'value.setter')
         self.assertIn('Cannot resolve own member documentation', issue)
 
+
+class WholeSourceGateTests(unittest.TestCase):
+    """Run the real default discovery gate against native-built fixture output."""
+
+    SOURCE_TEXT = '''"""Production fixture module."""
+class Other:
+    """Document a class outside the original pilot.
+
+    Attributes:
+        value: Stored value.
+    """
+    value = 1
+
+    def method(self, cls):
+        """Accept a non-receiver argument named cls.
+
+        Args:
+            cls (int): Explicit argument, not the receiver.
+        """
+        pass
+
+
+    @property
+    def count(self):
+        """Read count.
+
+        Returns:
+            count (int): Current count.
+        """
+        return 1
+
+    @count.setter
+    def count(self, value):
+        """Set count.
+
+        Args:
+            value (int): Replacement count.
+        """
+        pass
+
+    @count.deleter
+    def count(self):
+        """Delete count."""
+        pass
+
+
+def standalone(self, cls):
+    """Return the supplied value.
+
+    Args:
+        self (int): First ordinary parameter.
+        cls (int): Second ordinary parameter.
+
+    Returns:
+        result (int): Supplied value.
+
+    Raises:
+        ValueError: Negative input.
+    """
+    if self < 0:
+        raise ValueError("negative")
+    return cls
+
+def stream():
+    """Yield one value.
+
+    Yields:
+        item (int): Generated item.
+    """
+    yield 1
+
+def outer():
+    """Call a source-only helper.
+
+    Returns:
+        result (int): Helper result.
+    """
+    def helper():
+        """Return one.
+
+        Returns:
+            result (int): Constant value.
+        """
+        return 1
+    return helper()
+'''
+
+    @classmethod
+    def setUpClass(cls):
+        cls.directory = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.directory.cleanup)
+        cls.root = Path(cls.directory.name)
+        package = cls.root/'hw1/src/hw1_imitation'
+        package.mkdir(parents=True)
+        (package/'__init__.py').write_text('"""Fixture package."""\n')
+        (package/'sample.py').write_text(cls.SOURCE_TEXT)
+        tests = cls.root/'hw1/tests'
+        tests.mkdir()
+        (tests/'test_ignored.py').write_text('def undocumented_test():\n    return 1\n')
+        (cls.root/'docs').mkdir()
+        (cls.root/'docs/index.md').write_text('# Fixture\n')
+        (cls.root/'zensical.toml').write_text(f'''[project]
+site_name = "Whole-source integration"
+[project.plugins.mkdocstrings]
+custom_templates = "{ROOT / 'docs-overrides'}"
+[project.plugins.mkdocstrings.handlers.python]
+paths = ["hw1/src"]
+[project.plugins.mkdocstrings.handlers.python.options]
+allow_inspection = false
+show_root_heading = true
+show_source = false
+show_if_no_docstring = true
+show_docstring_attributes = false
+filters = []
+[project.plugins.mkdocstrings.handlers.python.options.extra]
+documented_fields = true
+[project.plugins.api-autonav]
+modules = ["hw1/src/hw1_imitation"]
+api_root_uri = "api"
+''')
+        result = subprocess.run([sys.executable, '-m', 'zensical', 'build', '--strict'], cwd=cls.root, text=True, capture_output=True)
+        if result.returncode: raise AssertionError(result.stdout+result.stderr)
+        cls.page = cls.root/'site/api/hw1_imitation/sample/index.html'
+        cls.original_html = cls.page.read_text()
+        cls.original_inventory = (cls.root/'site/objects.inv').read_bytes()
+
+    def setUp(self):
+        (self.root/'hw1/src/hw1_imitation/sample.py').write_text(self.SOURCE_TEXT)
+        (self.root/'hw1/src/hw1_imitation/__init__.py').write_text('"""Fixture package."""\n')
+        self.page.write_text(self.original_html)
+        (self.root/'site/objects.inv').write_bytes(self.original_inventory)
+
+    def run_gate(self, text=None, extraction_error=False):
+        if text is not None: (self.root/'hw1/src/hw1_imitation/sample.py').write_text(text)
+        report = self.root/'report.json'
+        argv = ['check_docs.py', '--ruff', 'ruff', '--report', str(report)]
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch.object(check_docs, 'ROOT', self.root))
+            stack.enter_context(patch.object(check_docs, 'SOURCE', self.root/'hw1/src'))
+            stack.enter_context(patch.object(sys, 'argv', argv))
+            runner = stack.enter_context(patch.object(check_docs.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '', '')))
+            stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+            if extraction_error: stack.enter_context(patch.object(check_docs.griffe, 'load', side_effect=RuntimeError('broken extraction')))
+            with self.assertRaises(SystemExit) as outcome: check_docs.main()
+        return outcome.exception.code, json.loads(report.read_text()), runner
+
+    def assert_failure(self, text, message):
+        code, report, _ = self.run_gate(text)
+        self.assertTrue(code, report)
+        self.assertTrue(any(message in error for error in report['errors']), report['errors'])
+
+    def test_default_enforces_whole_production_source_and_reports_local_helper(self):
+        code, report, runner = self.run_gate()
+        self.assertFalse(code, report['errors'])
+        self.assertEqual(report['scope'], 'all')
+        self.assertEqual(len(report['classes']), 1)
+        self.assertEqual(len(report['functions']), 4)
+        self.assertTrue(any(row['local'] and row['path'].endswith('.helper') for row in report['functions']))
+        command = runner.call_args.args[0]
+        self.assertIn(str(self.root/'hw1/src/hw1_imitation/__init__.py'), command)
+        self.assertIn(str(self.root/'hw1/src/hw1_imitation/sample.py'), command)
+        self.assertFalse(any('hw1/tests' in arg for arg in command))
+
+    def test_undocumented_nonpilot_class_field_and_member_fail(self):
+        for old, new, message in [
+            ('Document a class outside the original pilot.', '', 'Missing class docstring'),
+            ('        value: Stored value.\n', '', 'Missing attribute description: value'),
+            ('        value: Stored value.', '        obsolete: Stale value.', 'Stale attribute: obsolete'),
+            ('            cls (int): Explicit argument, not the receiver.\n', '', 'Missing parameter: method.cls'),
+        ]:
+            with self.subTest(message=message):
+                text = self.SOURCE_TEXT.replace(old, new)
+                if message == 'Missing class docstring':
+                    text = text.replace('    """\n\n    Attributes:\n        value: Stored value.\n    """', '    """ """')
+                self.assert_failure(text, message)
+
+    def test_module_docstrings_are_required(self):
+        self.assert_failure(self.SOURCE_TEXT.replace('"""Production fixture module."""', '""" """'), 'Missing module docstring')
+
+    def test_standalone_self_cls_parameters_are_not_receivers(self):
+        for name, desc in [('self', 'First ordinary parameter.'), ('cls', 'Second ordinary parameter.')]:
+            with self.subTest(name=name):
+                self.assert_failure(self.SOURCE_TEXT.replace('        '+name+' (int): '+desc+'\n', ''), 'Missing parameter: standalone.'+name)
+
+    def test_bound_receiver_exclusion_never_drops_keyword_only_or_variadic_args(self):
+        for signature, expected in [
+            ('*args', {'args'}), ('*, cls', {'cls'}),
+            ('self, /, *, cls', {'cls'}), ('self, *args, **kwargs', {'args', 'kwargs'}),
+        ]:
+            with self.subTest(signature=signature):
+                node = ast.parse('def method('+signature+'):\n    pass').body[0]
+                self.assertEqual(check_docs.parameters(node, bound=True), expected)
+        text = self.SOURCE_TEXT.replace('def method(self, cls):', 'def method(*, cls):')
+        self.assert_failure(text.replace('            cls (int): Explicit argument, not the receiver.\n', ''), 'Missing parameter: method.cls')
+
+    def test_standalone_empty_and_stale_parameters_fail(self):
+        self.assert_failure(self.SOURCE_TEXT.replace('First ordinary parameter.', ''), 'Empty parameter: standalone.self')
+        self.assert_failure(self.SOURCE_TEXT.replace('self (int): First ordinary parameter.', 'obsolete (int): First ordinary parameter.'), 'Stale parameter: standalone.obsolete')
+
+    def test_unannotated_return_and_yield_docs_are_required(self):
+        self.assert_failure(self.SOURCE_TEXT.replace('    Returns:\n        result (int): Supplied value.\n\n', ''), 'Missing return description: standalone')
+        self.assert_failure(self.SOURCE_TEXT.replace('    Yields:\n        item (int): Generated item.\n', ''), 'Missing yield description: stream')
+        self.assert_failure(self.SOURCE_TEXT.replace('Generated item.', ''), 'Empty yield description: stream')
+
+    def test_local_helper_is_source_checked_without_native_anchor(self):
+        self.assert_failure(self.SOURCE_TEXT.replace('        Returns:\n            result (int): Constant value.\n', ''), 'Missing return description: helper')
+
+    def test_explicit_raise_docs_required_and_empty_entries_fail(self):
+        self.assert_failure(self.SOURCE_TEXT.replace('    Raises:\n        ValueError: Negative input.\n', ''), 'Missing raise description: standalone.ValueError')
+        self.assert_failure(self.SOURCE_TEXT.replace('Negative input.', ''), 'Empty raise description: standalone')
+
+    def test_missing_and_duplicate_rendered_function_anchors_fail(self):
+        target = 'id="hw1_imitation.sample.standalone"'
+        self.page.write_text(self.original_html.replace(target, 'id="removed"'))
+        code, report, _ = self.run_gate()
+        self.assertTrue(code)
+        self.assertTrue(any('Missing rendered anchor: hw1_imitation.sample.standalone' in e for e in report['errors']))
+        self.page.write_text(self.original_html+'<h2 '+target+'>duplicate</h2>')
+        code, report, _ = self.run_gate()
+        self.assertTrue(code)
+        self.assertTrue(any('Duplicate rendered anchor' in e for e in report['errors']))
+
+    def test_missing_accessor_section_anchors_fail_without_inventory_requirement(self):
+        for accessor in ['setter', 'deleter']:
+            with self.subTest(accessor=accessor):
+                target = 'id="hw1_imitation.sample.Other.count--'+accessor+'"'
+                self.assertIn(target, self.original_html)
+                self.page.write_text(self.original_html.replace(target, 'id="removed"'))
+                code, report, _ = self.run_gate()
+                self.assertTrue(code)
+                self.assertTrue(any('Missing rendered accessor anchor' in e for e in report['errors']), report['errors'])
+
+    def test_missing_and_duplicate_object_inventory_entries_fail(self):
+        header = self.original_inventory.split(b'\n', 4)[:4]
+        rows = zlib.decompress(self.original_inventory.split(b'\n', 4)[4]).decode().splitlines()
+        entry = next(row for row in rows if row.startswith('hw1_imitation.sample.standalone '))
+        for changed, message in [(rows+[entry], 'Duplicate inventory entry'), ([row for row in rows if row != entry], 'Missing inventory entry')]:
+            with self.subTest(message=message):
+                (self.root/'site/objects.inv').write_bytes(b'\n'.join(header)+b'\n'+zlib.compress(('\n'.join(changed)+'\n').encode()))
+                code, report, _ = self.run_gate()
+                self.assertTrue(code)
+                self.assertTrue(any(message in e for e in report['errors']), report['errors'])
+
+    def test_extraction_and_inventory_read_failures_fail_closed(self):
+        code, report, _ = self.run_gate(extraction_error=True)
+        self.assertTrue(code)
+        self.assertTrue(any('broken extraction' in e for e in report['errors']))
+        (self.root/'site/objects.inv').write_bytes(b'invalid')
+        code, report, _ = self.run_gate()
+        self.assertTrue(code)
+        self.assertTrue(any('extraction/validation failed' in e for e in report['errors']))
+
+    def test_local_helpers_in_except_and_match_are_not_silently_omitted(self):
+        cases = [
+            '    try:\n        pass\n    except Exception:\n        def hidden():\n            return 1\n',
+            '    match 1:\n        case 1:\n            def hidden():\n                return 1\n',
+        ]
+        for inserted in cases:
+            with self.subTest(inserted=inserted):
+                self.assert_failure(self.SOURCE_TEXT.replace('    return helper()\n', inserted+'    return helper()\n'), 'Missing callable docstring: hidden')
+
+    def test_local_class_methods_skip_only_bound_receiver(self):
+        inserted = '''    class Local:
+        """Local implementation."""
+        def use(self, cls):
+            """Use an explicit argument.
+
+            Args:
+                cls (int): An actual argument.
+            """
+            pass
+'''
+        text = self.SOURCE_TEXT.replace('    return helper()\n', inserted+'    return helper()\n')
+        code, report, _ = self.run_gate(text)
+        self.assertFalse(code, report['errors'])
+        self.assert_failure(text.replace('                cls (int): An actual argument.\n', ''), 'Missing parameter: use.cls')
+
+    def test_unannotated_empty_return_description_fails(self):
+        self.assert_failure(self.SOURCE_TEXT.replace('Supplied value.', ''), 'Empty return description: standalone')
+
+    def test_caught_and_dynamic_raises_are_explicit_review_exceptions(self):
+        text = self.SOURCE_TEXT.replace('    if self < 0:\n        raise ValueError("negative")', '    try:\n        raise RuntimeError("handled")\n    except RuntimeError:\n        pass\n    if self < 0:\n        error = ValueError("negative")\n        raise error')
+        code, report, _ = self.run_gate(text)
+        self.assertFalse(code, report['errors'])
+        self.assertTrue(any('raise requires semantic review' in item['reason'] for item in report['exceptions']))
+
+    def test_unexpected_native_function_is_rejected(self):
+        self.page.write_text(self.original_html+'<div class="doc doc-object doc-function"><h2 id="hw1_imitation.sample.unexpected">Extra</h2></div>')
+        code, report, _ = self.run_gate()
+        self.assertTrue(code)
+        self.assertIn('hw1_imitation.sample.unexpected', report['native_function_difference']['extra'])
+
+
 if __name__ == '__main__':
     unittest.main()

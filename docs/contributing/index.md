@@ -13,7 +13,7 @@ uv run --no-sync zensical serve
 uv run --no-sync zensical build --strict
 ```
 
-The site is written to `site/`. Documentation CI runs the strict build and pilot checks on every PR, on pushes to `main`, and on published releases. A separate trusted workflow publishes successful artifacts. Documentation dependencies are isolated from each training project's environment.
+The site is written to `site/`. Documentation CI runs the strict build and whole-source documentation checks on every PR, on pushes to `main`, and on published releases. A separate trusted workflow publishes successful artifacts. Documentation dependencies are isolated from each training project's environment.
 
 ## Add a page
 
@@ -45,14 +45,16 @@ The native `api-autonav` integration discovers production modules beneath
 `hw1/src/hw1_imitation` and creates the **Generated API** section under `/api/`.
 Adding a class in that package requires no Markdown page or navigation entry.
 Discovery includes undocumented objects; generated does not mean reviewed.
-The first documentation-quality pilot is
-[`Normalizer`][hw1_imitation.data.Normalizer]. Other classes retain their
-existing source documentation, including
-[`TrainConfig`][hw1_imitation.train.TrainConfig].
+All production modules, classes, own members, and standalone functions under
+`hw1/src` are covered by the documentation gate. Tests under `hw1/tests` are
+outside this scope. Imported/re-exported and inherited objects are not counted
+as newly authored APIs.
 
-Write Google-style class and member docstrings beside the code. Use `Attributes`
-for field meanings, `Args` for parameters, and `Returns` and `Raises` where
-applicable. Names, annotations, signatures, and defaults come from source.
+Write Google-style docstrings beside the code. Use `Attributes` for class and
+stored instance fields, `Args` for parameters, and `Returns` or `Yields` for
+outputs. Document exception behavior in `Raises`. Keep meanings in Python
+source; shared templates derive signatures, types, and values from metadata.
+
 Ordinary `#` comments appear in source disclosure but are not field descriptions.
 For an unannotated property return, use a named Google entry such as
 `count (int): Number of entries.` Do not change executable annotations merely
@@ -61,8 +63,6 @@ for documentation. Inspection is disabled, so builds do not import training code
 Class coverage includes explicitly defined methods, properties, constructors,
 dunders, and private helpers; inherited members and synthesized constructors
 are not repeated. Private helpers are marked as implementation details.
-The checker reports function-local classes and detectable dynamic assignments
-as exceptions. Arbitrary runtime-created state remains a static-analysis limit.
 
 Generated pages are canonical for Python-object links. Existing comparison
 pages retain their URLs and anchors but set `skip_local_inventory: true`, so
@@ -70,31 +70,34 @@ their duplicate renderings do not register symbolic targets. Link from authored
 guides with `[Normalizer][hw1_imitation.data.Normalizer]`. Distinct pages can
 still appear separately in search during this comparison phase.
 
-### Validate the pilot
+### Validate production documentation
 
-Build first, then run the documentation checker using the documentation Python
-and an existing Ruff executable:
+After building, run the same gate used by CI:
 
-```bash
-uv run --no-sync zensical build --strict
-RUFF_BIN=/path/to/ruff uv run --no-sync python scripts/check_docs.py
+```bash title="Check production API documentation"
+uv tool install ruff==0.14.10
+uv run --no-sync python scripts/check_docs.py --all --report docs-coverage.json
 ```
 
-Ruff 0.14.10 is already declared and locked by HW1; use an existing installation
-without installing the training environment. The checker never installs tools. Documentation CI installs only standalone
-Ruff 0.14.10, then runs this same checker after the strict build.
-`docs/ruff.toml` selects Google-style docstring checks. It lints the exact source
-of the pilot class, leaving missing-documentation checks to the structural
-checker rather than Ruff's public-only rules.
+The default without `--all` is also whole-source enforcement. CI explicitly
+passes `--all` through `scripts/build_docs.py` before preparing an artifact.
+Ruff checks every production Python file; no training environment is installed.
+For a focused authoring check, use `--pilot qualified.Class`. This opt-in mode
+is not the CI gate. Its optional `--baseline PATH` compares that class's module
+against pre-edit source with docstrings removed.
 
-`scripts/check_docs.py` reconciles source classes against Griffe extraction and
-actual native-generated HTML anchors. It enforces class/member docstrings,
-attribute and parameter descriptions, stale names, empty descriptions, and
-rendered member anchors for `Normalizer`. The JSON report records coverage gaps
-for all other classes without failing the pilot. Use `--report PATH` to save it,
-and optionally `--baseline PATH` to verify `data.py` has an unchanged executable
-AST after docstrings are removed. These checks do not prove semantic accuracy;
-source review and desktop/mobile interaction review remain required.
+The gate rejects missing or empty module/class/member/field/parameter/output
+documentation, stale fields and parameters, missing or empty structured raises,
+and missing/duplicate native API anchors or inventory entries. It reconciles
+AST and native class/function inventories, including private definitions.
+Explicit named raises outside `try` blocks require descriptions; caught,
+rethrown, dynamic, and dependency exceptions still need semantic review.
+
+Function-local helpers are checked in source and reported as exceptions to
+native discovery: they have no independently generated API object or link.
+Function-local classes and arbitrary runtime-created attributes need explicit
+review. Structural checks cannot establish behavioral accuracy, validate every
+possible runtime object, or replace desktop/mobile rendered review.
 
 ## Maintain the theme
 

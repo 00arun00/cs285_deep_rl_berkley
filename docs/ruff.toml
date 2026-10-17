@@ -1,4 +1,5 @@
-# Invoked on the extracted pilot class by scripts/check_docs.py.
+# Applied to all production Python source by scripts/check_docs.py; missing
+# structured documentation is enforced by its AST/native extraction checks.
 [lint]
 select = ["D"]
 ignore = ["D100", "D101", "D102", "D103", "D104", "D105", "D107"]

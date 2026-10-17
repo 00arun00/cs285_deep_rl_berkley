@@ -64,7 +64,7 @@ def main():
             env=env,
         )
         subprocess.run(
-            ["python", "scripts/check_docs.py", "--report", "docs-coverage.json"],
+            ["python", "scripts/check_docs.py", "--all", "--report", "docs-coverage.json"],
             check=True,
         )
     finally:
