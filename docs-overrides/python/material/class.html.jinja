@@ -1,0 +1,42 @@
+{# Opt-in layout: parsed Attributes prose plus live source annotations/defaults. #}
+{% extends "_base/class.html.jinja" %}
+{% import "documented_fields.html.jinja" as documented %}
+{% block children scoped %}
+{% if config.extra.get("documented_fields") %}
+<div class="documented-fields">
+{% for section in class.docstring.parsed if section.kind.value == "attributes" %}
+{% for entry in section.value %}
+{# A documented tuple-assigned instance field may be absent from Griffe.
+   Preserve its description/anchor; completeness reconciles names against AST. #}
+{% set field = class.attributes.get(entry.name) %}
+{% if not field or documented.compact_field(field) %}
+{% set field_path = field.path if field else class.path ~ "." ~ entry.name %}
+{# Long source expressions need the article width, rather than a narrow value column. #}
+{% set value_text = field.value|string if field and field.value is not none else "" %}
+{% set long_value = value_text|length > 48 or "\n" in value_text %}
+<section class="documented-field{% if long_value %} documented-field--long-value{% endif %}" data-field="{{ entry.name }}">
+<div class="documented-field__main">
+{% filter heading(heading_level + 1, role="attribute", id=field_path, class="doc doc-heading documented-field__name", toc_label=entry.name, skip_inventory=config.skip_local_inventory) %}<code>{{ entry.name }}</code>{% endfilter %}
+<div class="documented-field__description">{{ entry.description|convert_markdown(heading_level + 1, field_path, autoref_hook=AutorefsHook(field or class, config)) }}</div>
+</div>
+{% if field %}
+{# Canonical base paths distinguish stdlib enum families from similarly named classes. #}
+{% set enum = namespace(value=false) %}
+{% for base in class.bases %}
+{% if base.canonical_path in ["enum.Enum", "enum.IntEnum", "enum.StrEnum", "enum.Flag", "enum.IntFlag", "enum.ReprEnum"] %}{% set enum.value = true %}{% endif %}
+{% endfor %}
+{% set constructor = class.members.get("__init__") %}
+{% set assigned = constructor and constructor.lineno and constructor.endlineno and field.lineno and constructor.lineno <= field.lineno <= constructor.endlineno %}
+<dl class="documented-field__metadata">
+{% if field.annotation %}<div><dt>Type</dt><dd><code>{{ field.annotation }}</code></dd></div>{% endif %}
+{% if field.value is not none %}<div class="documented-field__value"><dt>{{ "Value" if enum.value else "Assigned value" if assigned else "Default" }}</dt><dd><code>{{ field.value }}</code></dd></div>{% else %}<div><dt>Default</dt><dd>No default</dd></div>{% endif %}
+</dl>
+{% endif %}
+</section>
+{% endif %}
+{% endfor %}
+{% endfor %}
+</div>
+{% endif %}
+{{ super() }}
+{% endblock children %}

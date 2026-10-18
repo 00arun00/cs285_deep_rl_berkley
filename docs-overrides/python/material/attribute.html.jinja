@@ -1,0 +1,9 @@
+{# Share exactly the same eligibility rule as the compact class rows. #}
+{% import "documented_fields.html.jinja" as documented %}
+{% set rendered = namespace(value=false) %}
+{% if config.extra.get("documented_fields") and attribute.parent.is_class and documented.compact_field(attribute) %}
+{% for section in attribute.parent.docstring.parsed if section.kind.value == "attributes" %}
+{% for entry in section.value if entry.name == attribute.name %}{% set rendered.value = true %}{% endfor %}
+{% endfor %}
+{% endif %}
+{% if not rendered.value %}{% include "documented_attribute.html.jinja" %}{% endif %}
