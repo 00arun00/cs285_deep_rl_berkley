@@ -1,0 +1,92 @@
+name: Publish documentation
+
+on:
+  workflow_run:
+    workflows: [Documentation]
+    types: [completed]
+  # Cleanup only: no PR checkout or execution in this privileged context.
+  pull_request_target:
+    types: [closed]
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_call:
+    inputs:
+      snapshot_id:
+        description: "Recorded snapshot explicitly approved by the rebuild workflow"
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Publish/approve an existing build, or clean up expired previews"
+        type: choice
+        options: [publish, cleanup]
+        default: publish
+      run_id:
+        description: "Successful Documentation run ID (also approves a fork preview at that exact head)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+# Keep each PR publication/cleanup: the default single pending slot loses events.
+concurrency:
+  group: docs-pages-publisher
+  queue: max
+
+jobs:
+  publish:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.prepare.outputs.url }}
+    permissions:
+      contents: write
+      actions: read
+      pages: write
+      id-token: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Never execute code from the triggering PR or release.
+          ref: main
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.8"
+          python-version: "3.13"
+          enable-cache: false
+      - run: uv sync --locked --group publishing
+      - name: Validate artifact and assemble all published versions
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APPROVED_RUN: ${{ inputs.run_id }}
+          SNAPSHOT_ID: ${{ inputs.snapshot_id }}
+          REQUESTED_ACTION: ${{ inputs.action }}
+          DOCS_PREVIEW_RETENTION_DAYS: ${{ vars.DOCS_PREVIEW_RETENTION_DAYS || '30' }}
+        run: |
+          args=()
+          if [ "$REQUESTED_ACTION" = cleanup ]; then args+=(--expire); fi
+          uv run --no-sync python scripts/publish_docs.py --run-id "$APPROVED_RUN" --snapshot-id "$SNAPSHOT_ID" --pages-dir "$RUNNER_TEMP/docs-pages" "${args[@]}"
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+        if: steps.prepare.outputs.publish == 'true'
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        if: steps.prepare.outputs.publish == 'true'
+        with:
+          name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/docs-pages
+      - uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+        if: steps.prepare.outputs.publish == 'true'
+        id: deploy
+        with:
+          artifact_name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Record successful publication and update preview comments
+        if: steps.prepare.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --no-sync python scripts/publish_docs.py --finish
