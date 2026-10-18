@@ -13,7 +13,7 @@ uv run --no-sync zensical serve
 uv run --no-sync zensical build --strict
 ```
 
-The site is written to `site/`. Documentation CI runs the rendering tests and strict build on every PR, on pushes to `main`, and on published releases. A separate trusted workflow publishes successful artifacts. Whole-source completeness enforcement will be enabled after the source documentation is complete. Documentation dependencies are isolated from each training project's environment.
+The site is written to `site/`. Documentation CI runs the strict build and whole-source documentation checks on every PR, on pushes to `main`, and on published releases. A separate trusted workflow publishes successful artifacts. Documentation dependencies are isolated from each training project's environment.
 
 ## Add a page
 
@@ -72,14 +72,15 @@ still appear separately in search during this comparison phase.
 
 ### Validate production documentation
 
-After building, run the completeness checker while authoring:
+After building, run the same gate used by CI:
 
 ```bash title="Check production API documentation"
 uv tool install ruff==0.14.10
 uv run --no-sync python scripts/check_docs.py --all --report docs-coverage.json
 ```
 
-The default without `--all` is also whole-source enforcement. Whole-source CI enforcement is deferred until the source documentation is complete.
+The default without `--all` is also whole-source enforcement. CI explicitly
+passes `--all` through `scripts/build_docs.py` before preparing an artifact.
 Ruff checks every production Python file; no training environment is installed.
 For a focused authoring check, use `--pilot qualified.Class`. This opt-in mode
 is not the CI gate. Its optional `--baseline PATH` compares that class's module
@@ -240,7 +241,7 @@ expiry is considered.
 `mike` is pinned to the Zensical-compatible fork in the optional `publishing`
 dependency group. It manages the version inventory, aliases, redirects and git
 commits. `scripts/build_docs.py` supplies the URL prefix and announcement metadata,
-then runs the strict build. Whole-source completeness enforcement will be enabled after the source documentation is complete. `scripts/publish_docs.py` uses
+then runs the strict build and existing checker. `scripts/publish_docs.py` uses
 the pinned mike API to publish already-built files; it deliberately does not use
 `mike deploy`, which would execute a build in the privileged job. Durable snapshot,
 approval, pending-deployment and publication records live in `.docs-state/` on

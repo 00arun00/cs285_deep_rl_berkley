@@ -96,6 +96,16 @@ def main():
             check=True,
             env=env,
         )
+        subprocess.run(
+            [
+                "python",
+                "scripts/check_docs.py",
+                "--all",
+                "--report",
+                "docs-coverage.json",
+            ],
+            check=True,
+        )
     finally:
         config_path.unlink()
     if prefix:
