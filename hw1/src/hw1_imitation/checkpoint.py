@@ -1,14 +1,18 @@
-"""Save and load self-contained Push-T policies.
+"""Save and load self-contained policies for inference or a new training run.
 
-A policy checkpoint contains:
-- Architecture configuration.
-- Learned model weights.
-- Training configuration (currently dropout probability).
-- Observation and action normalization statistics.
-- Default inference settings.
+**Checkpoint contents**
 
-Loading does not restore a training session. Further training uses a
-new optimizer, seed, and logging run; saved dropout can be overridden.
+- Architecture configuration and learned model weights.
+- Runtime training configuration: per-layer dropout probabilities.
+- Observation/action normalization statistics and default flow inference steps.
+
+Use [save_policy][hw1_imitation.checkpoint.save_policy] to write a checkpoint,
+then [load_policy][hw1_imitation.checkpoint.load_policy] to reconstruct it without
+the original dataset. Weights are stored on CPU; configuration is plain data.
+
+Loading does not resume a training session. No optimizer, training position,
+or saved RNG state is restored. Further training uses a new optimizer and
+caller-owned randomness; saved dropout settings can be explicitly overridden.
 """
 
 from __future__ import annotations
@@ -32,21 +36,37 @@ def save_policy(
     *,
     flow_num_steps: int = 10,
 ) -> None:
-    """Save everything needed to reconstruct and use a policy.
+    """Write the policy, normalization statistics, and inference defaults.
+
+    **Write sequence**
+
+    1. Validate inference steps and normalizer dimensions; assemble CPU weights,
+       copied normalization tensors, and plain configuration data.
+    2. Create missing parent directories and serialize to a sibling `.tmp` file.
+    3. Replace the destination after serialization succeeds, then clean up the
+       temporary path.
+
+    Calls targeting the same path must not run concurrently because the temporary
+    name is shared. Keep model parameters and statistics stable while saving:
+    CPU weight tensors are detached but not necessarily copied. This helper does
+    not change the model's train/eval mode.
+
+    Filesystem and PyTorch serialization errors propagate to the caller. Replacing
+    a file after serialization is not a guarantee of crash-durable storage.
 
     Args:
-        path: Destination checkpoint file.
-        model: Policy whose architecture and weights will be saved.
-        normalizer: Statistics used to prepare its training data.
-        flow_num_steps: Default integration steps for flow inference.
-            Ignored by MSE policies.
+        path: Destination checkpoint file. An existing file is replaced after
+            successful serialization to `path` with `.tmp` appended to its suffix.
+        model: Policy whose architecture, weights, and dropout settings are saved.
+        normalizer: Statistics used for training, with dimensions matching the
+            policy. Export revalidates statistics and copies their numerical storage.
+        flow_num_steps: Positive Python integer default for flow inference. Booleans
+            are rejected. Validated even for MSE policies, which ignore it at sampling.
 
-    Weights are saved on CPU so loading does not require the original
-    accelerator. Configuration is saved as plain data, not a pickled
-    PolicyConfig instance.
-
-    The destination is replaced only after serialization succeeds.
-    Calls writing to the same path must not run concurrently.
+    Raises:
+        ValueError: Inference steps are invalid, normalizer dimensions do not match,
+            or stored statistics fail validation.
+        OSError: A directory, temporary-file, replacement, or cleanup operation fails.
     """
     if (
         isinstance(flow_num_steps, bool)
@@ -89,27 +109,46 @@ def load_policy(
     *,
     device: torch.device | str = "cpu",
 ) -> tuple[BasePolicy, Normalizer, dict[str, int]]:
-    """Reconstruct a policy without its original training dataset.
+    """Reconstruct a checkpointed policy and return it in evaluation mode.
+
+    **Load sequence**
+
+    1. Read tensors onto CPU with `weights_only=True` and check the format version.
+    2. Reconstruct architecture and normalization statistics; validate dimensions
+       and the saved positive integer flow-step default.
+    3. Construct the model on meta, allocate CPU storage, and strictly load weights.
+    4. Restore per-layer dropout, transfer to `device`, and call `eval()`.
+
+    Model construction and loading do not consume default RNG streams. Inference
+    randomness remains caller-owned and must be supplied when sampling actions.
+    For further training, create a new optimizer and call `model.train()`; use
+    [override_dropout_p][hw1_imitation.rng_modules.override_dropout_p] to replace
+    saved dropout probabilities if desired.
+
+    The loader checks required components as it uses them rather than performing
+    an exhaustive schema check up front. PyTorch deserialization and device errors
+    propagate; no device fallback is attempted.
 
     Args:
-        path: Checkpoint produced by save_policy().
-        device: Device on which to return the policy. The architecture is
-            constructed on meta, materialized on CPU, and populated with
-            saved weights before transfer.
+        path: Checkpoint produced by [save_policy][hw1_imitation.checkpoint.save_policy].
+        device: Destination device for the reconstructed policy. Normalizer arrays
+            remain NumPy arrays on CPU.
 
     Returns:
-        model: Loaded policy in evaluation mode.
-        normalizer: Saved observation/action normalization statistics.
-        inference_config: Saved inference defaults.
+        model: Loaded policy in evaluation mode on `device`.
+        normalizer: Saved state/action statistics with independent copied storage.
+        inference_config: Dictionary containing the validated `flow_num_steps` default.
 
-    Model construction and loading do not consume default RNG streams.
-    Inference randomness remains caller-owned and is supplied when sampling
-    actions.
-
-    Per-layer dropout probabilities are restored from the required training
-    configuration. For further training, construct a new optimizer and call
-    model.train(); override_dropout_p(model, p) can explicitly replace all values.
-    No optimizer state, training position, or saved RNG state is restored.
+    Raises:
+        ValueError: The outer object or format version is unsupported, architecture
+            or normalization is invalid, flow steps are invalid, or dropout settings
+            do not match the reconstructed model.
+        KeyError: A required checkpoint component is missing.
+        TypeError: Malformed architecture arguments or unsupported normalization
+            tensor conversions fail. Other malformed inputs can also fail in PyTorch.
+        RuntimeError: Strict weight loading rejects missing, unexpected, or
+            incompatible parameter entries, or a PyTorch operation fails.
+        OSError: The checkpoint file cannot be read.
     """
     checkpoint = torch.load(
         path,

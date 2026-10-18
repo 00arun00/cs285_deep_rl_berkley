@@ -1,4 +1,28 @@
-"""Dataset utilities for Push-T."""
+"""Load demonstrations and turn episode-local windows into training samples.
+
+**Data flow**
+
+1. Use [download_pusht][hw1_imitation.data.download_pusht] if the data is not
+   available locally. [load_episodes_dataset][hw1_imitation.data.load_episodes_dataset]
+   reads the packed arrays into [Episode][hw1_imitation.data.Episode] objects
+   exposed through [EpisodesDataset][hw1_imitation.data.EpisodesDataset].
+2. Split whole episodes into training and validation subsets. For a fresh run,
+   fit [Normalizer][hw1_imitation.data.Normalizer] on training episodes only;
+   when initializing from a checkpoint, reuse its stored normalizer. Use those
+   same statistics for validation and inference.
+3. Build an [EpisodeChunkDataset][hw1_imitation.data.EpisodeChunkDataset] for
+   each subset. It combines [SingleEpisodeChunks][hw1_imitation.data.SingleEpisodeChunks]
+   children without crossing episode boundaries. Samples pair one state with
+   an action window; optional padding repeats the episode's final action.
+
+**Storage and ownership**
+
+- Episode arrays may share backing storage. Construction marks supplied arrays
+  read-only, but writable aliases can still change their contents.
+- Chunk datasets may borrow that storage. Keep source data unchanged while
+  using them.
+- Each sampled state/action pair contains independent float32 tensors.
+"""
 
 from __future__ import annotations
 
@@ -21,11 +45,32 @@ Float32Array: TypeAlias = NDArray[np.float32]
 
 
 def download_pusht(dataset_dir: Path) -> Path:
-    """Download and extract the Push-T dataset if needed.
+    """Download the Push-T archive when needed and extract it locally.
 
-    Returns the path to the extracted Zarr dataset.
+    **Cache behavior**
+
+    1. Create `dataset_dir` and check the expected Zarr path.
+    2. If that path exists, return immediately without validating its type or data.
+    3. Otherwise reuse an existing `pusht.zip`, or download it from `PUSHT_URL`,
+       then extract the archive into `dataset_dir`.
+
+    This helper does not validate archive contents, verify a checksum, or repair
+    partial downloads. Download/extraction failures propagate and may leave partial
+    files; neither the archive nor extracted data is removed afterward.
+
+    Args:
+        dataset_dir: Root directory for the cached ZIP and extracted dataset.
+
+    Returns:
+        zarr_path: Expected extracted Zarr path under `dataset_dir`. Its existence
+            or validity is not checked again after extraction.
+
+    Raises:
+        OSError: Directory creation, download, or file access fails.
+        zipfile.BadZipFile: The cached or downloaded archive is not a valid ZIP.
+
+    Other network and extraction errors propagate from their underlying libraries.
     """
-
     dataset_dir.mkdir(parents=True, exist_ok=True)
     zarr_path = dataset_dir / ZARR_RELATIVE_PATH
     # check if the final extracted path exists
@@ -46,18 +91,28 @@ def download_pusht(dataset_dir: Path) -> Path:
 
 
 def _load_pusht_zarr(zarr_path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """[Helper] Load packed Push-T arrays from a Zarr dataset into memory.
+    """Materialize packed Push-T arrays from a Zarr group (implementation detail).
+
+    Open the group read-only and load `data/state`, `data/action`, and
+    `meta/episode_ends`. Convert these to NumPy arrays in memory; returned arrays
+    are not live views into the Zarr store. Shape and episode-boundary checks are
+    performed later by the episode-construction helper.
 
     Args:
-        zarr_path: Path to the extracted Push-T Zarr group.
+        zarr_path: Extracted Push-T Zarr group to open.
 
     Returns:
-        States and actions as float32 arrays, followed by exclusive episode
-        end offsets as an int64 array. States and actions concatenate all
-        episodes along their first axis.
+        states: Float32 array of concatenated state rows across all episodes.
+        actions: Float32 array of concatenated action rows across all episodes.
+        episode_ends: Int64 array of exclusive episode-end offsets. Conversion to
+            int64 occurs here, before subsequent boundary validation.
 
-    The Zarr group is opened read-only. The returned NumPy arrays are
-    materialized in memory; they are not live views into the Zarr store.
+    Raises:
+        KeyError: A required array path is missing from the group.
+        AssertionError: A required object is not a `zarr.Array`, when Python
+            assertions are enabled.
+
+    Zarr storage and NumPy conversion errors propagate.
     """
     root = zarr.open_group(zarr_path, mode="r")
     states_array = root["data/state"]
@@ -76,15 +131,36 @@ def _load_pusht_zarr(zarr_path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarra
 
 @dataclass(frozen=True, slots=True)
 class Episode:
-    """State-action pairs from one demonstration.
+    """Store the aligned state-action arrays for one demonstration.
 
-    States and actions are aligned by timestep: states[t] is the state
-    associated with actions[t]. Both arrays must be nonempty, two-dimensional
-    float32 arrays with the same number of timesteps.
+    Each row pairs `states[t]` with `actions[t]`.
 
-    Construction marks the supplied array objects read-only without copying
-    their data. Writable aliases to the backing memory can still change the
-    values; this is a read-only interface, not deeply immutable storage.
+    **Input requirements**
+
+    - Both arrays must be two-dimensional float32 arrays with matching,
+      nonzero timestep counts.
+    - Feature columns may be empty. Finite values and `episode_id` are not
+      validated here.
+
+    **Storage and ownership**
+
+    - Construction marks the supplied arrays read-only without copying data.
+    - Frozen fields prevent rebinding, but writable aliases can still change
+      the backing memory. This is not deeply immutable storage.
+    - Keep the data unchanged while datasets use it.
+
+    Attributes:
+        episode_id: Caller-supplied identifier retained for dataset metadata.
+            It need not equal the episode's position in a collection.
+        states: State features with shape `(timesteps, state_dim)`, dtype
+            float32. The supplied array object becomes read-only.
+        actions: Actions with shape `(timesteps, action_dim)`, dtype float32.
+            The supplied array object becomes read-only.
+
+    Raises:
+        ValueError: Either array is not two-dimensional, timestep counts differ,
+            or there are no timesteps.
+        TypeError: Either array has a dtype other than float32.
     """
 
     episode_id: int
@@ -92,6 +168,17 @@ class Episode:
     actions: Float32Array  # shape: (timesteps, action_dim) - ReadOnly
 
     def __post_init__(self) -> None:
+        """Validate array shape and dtype, then mark both array objects read-only.
+
+        This dataclass lifecycle hook runs on construction. Validation finishes
+        before writeability flags are changed; no data is copied. Calling the hook
+        again repeats these checks and flag updates.
+
+        Raises:
+            ValueError: Arrays are not two-dimensional, have different timestep
+                counts, or contain no timesteps.
+            TypeError: States or actions do not use float32.
+        """
         if self.states.ndim != 2:
             raise ValueError(
                 f"states should have shape: (timesteps, state_dim) but got {self.states.shape}"
@@ -123,24 +210,109 @@ class Episode:
         self.actions.setflags(write=False)
 
     def __len__(self) -> int:
+        """Return the number of aligned timesteps in the episode.
+
+        Returns:
+            count: Number of rows in `states`, which matches `actions` after
+                successful construction.
+        """
         return len(self.states)
 
 
 # Needed wrapper for utilizing pytorch random_split()
 class EpisodesDataset(Dataset[Episode]):
+    """Expose whole episodes through PyTorch's dataset interface.
+
+    Use this wrapper with utilities such as `random_split`. For training
+    windows, use [EpisodeChunkDataset][hw1_imitation.data.EpisodeChunkDataset].
+
+    **Collection behavior**
+
+    - Store the supplied tuple by reference and return the same episode objects.
+    - Perform no additional validation or copying; an empty collection is valid.
+
+    Implements the length and indexing interface of
+    [PyTorch Dataset](https://docs.pytorch.org/docs/stable/data.html#torch.utils.data.Dataset).
+
+    Attributes:
+        episodes: The original ordered tuple of episode objects. Array ownership
+            and writeability remain those of each episode.
+    """
     def __init__(self, episodes: tuple[Episode, ...]):
+        """Retain the episode collection without validating or copying it.
+
+        Args:
+            episodes: Ordered tuple to expose through the dataset. Empty tuples are
+                valid; element types are assumed to match the annotation.
+        """
         self.episodes = episodes
 
     def __len__(self) -> int:
+        """Return the number of episodes in the stored collection.
+
+        Returns:
+            count: Length of `episodes`, including zero for an empty collection.
+        """
         return len(self.episodes)
 
     def __getitem__(self, idx: int) -> Episode:
+        """Delegate episode lookup to the stored tuple.
+
+        Args:
+            idx: Integer position, with negative indices counted from the end.
+                Although annotated for integer lookup, the implementation also
+                passes slices through to the tuple unchanged.
+
+        Returns:
+            episode: The same stored episode object for an integer index. A slice
+                returns a tuple of the original episode objects instead; no arrays
+                are copied.
+
+        Raises:
+            IndexError: An integer index is outside the tuple's bounds.
+            TypeError: The tuple rejects the index type.
+        """
         return self.episodes[idx]
 
 
 @dataclass(frozen=True, slots=True)
 class Normalizer:
-    """Feature-wise normalizer for states and actions."""
+    """Normalize state and action features using stored means and scales.
+
+    **Typical use**
+
+    1. Fit training observations with
+       [from_packed_data][hw1_imitation.data.Normalizer.from_packed_data] or
+       [from_episodes_data][hw1_imitation.data.Normalizer.from_episodes_data].
+       Reuse those statistics for validation and inference.
+    2. Standardize states and actions with
+       [normalize_state][hw1_imitation.data.Normalizer.normalize_state] and
+       [normalize_action][hw1_imitation.data.Normalizer.normalize_action].
+    3. Restore policy outputs to action coordinates with
+       [denormalize_action][hw1_imitation.data.Normalizer.denormalize_action].
+
+    **Storage and validation**
+
+    - Direct construction borrows all four arrays without copying or changing
+      their writeability. Frozen fields prevent rebinding, not array mutation.
+    - Construction validates statistics; transformations do not revalidate them.
+    - [state_dict][hw1_imitation.data.Normalizer.state_dict] and
+      [from_state_dict][hw1_imitation.data.Normalizer.from_state_dict] copy
+      storage for checkpoints.
+
+    See [from_episodes_data][hw1_imitation.data.Normalizer.from_episodes_data]
+    for a worked example.
+
+    Attributes:
+        state_mean: Finite per-feature state means, shape `(state_dim,)`.
+        state_std: Finite, strictly positive state scales, matching `state_mean`.
+        action_mean: Finite per-feature action means, shape `(action_dim,)`.
+        action_std: Finite, strictly positive action scales, matching `action_mean`.
+
+    Raises:
+        ValueError: Statistics are empty, not matching one-dimensional vectors,
+            contain nonfinite values, or have nonpositive scales.
+    """
 
     state_mean: np.ndarray
     state_std: np.ndarray
@@ -148,27 +320,97 @@ class Normalizer:
     action_std: np.ndarray
 
     def __post_init__(self) -> None:
+        """Validate statistics after dataclass construction.
+
+        This lifecycle hook also runs when a factory constructs an instance.
+        It neither copies nor freezes array storage.
+
+        Raises:
+            ValueError: A statistics vector is malformed or has invalid values.
+        """
         self._validate_statistics()
 
     def normalize_state(self, state: np.ndarray) -> np.ndarray:
+        """Standardize states by subtracting the mean and dividing by the scale.
+
+        Args:
+            state: State array, normally shaped `(..., state_dim)`. NumPy
+                broadcasting determines compatible shapes; rank, feature count,
+                dtype, and finite values are not checked explicitly.
+
+        Returns:
+            result: A newly computed array with the broadcast result shape. The input and
+                stored statistics are not modified; NumPy determines the result dtype.
+
+        Raises:
+            ValueError: Input and statistics cannot be broadcast together.
+        """
         return (state - self.state_mean) / self.state_std
 
     def normalize_action(self, action: np.ndarray) -> np.ndarray:
+        """Standardize actions by subtracting the mean and dividing by the scale.
+
+        Args:
+            action: Action array, normally shaped `(..., action_dim)`. NumPy
+                broadcasting determines compatibility; rank, feature count, dtype,
+                and finite values are not checked explicitly.
+
+        Returns:
+            result: A newly computed array with the broadcast result shape. The input and
+                stored statistics are not modified; NumPy determines the result dtype.
+
+        Raises:
+            ValueError: Input and statistics cannot be broadcast together.
+        """
         return (action - self.action_mean) / self.action_std
 
     def denormalize_action(self, action: np.ndarray) -> np.ndarray:
+        """Restore action coordinates by multiplying by the scale and adding the mean.
+
+        Args:
+            action: Normalized action array, normally shaped `(..., action_dim)`.
+                NumPy broadcasting determines compatibility; inputs are not
+                explicitly checked for rank, feature count, dtype, or finite values.
+
+        Returns:
+            result: A newly computed array in the original action coordinates, with the
+                broadcast result shape. Inputs and statistics are not modified.
+
+        Raises:
+            ValueError: Input and statistics cannot be broadcast together.
+        """
         return action * self.action_std + self.action_mean
 
     @property
     def state_dim(self):
+        """Return the number of state features in the stored mean vector.
+
+        Returns:
+            count (int): Number of entries in `state_mean`.
+        """
         return self.state_mean.shape[0]
 
     @property
     def action_dim(self):
+        """Return the number of action features in the stored mean vector.
+
+        Returns:
+            count (int): Number of entries in `action_mean`.
+        """
         return self.action_mean.shape[0]
 
     @staticmethod
     def _safe_std(std: np.ndarray, eps: float = 1e-6) -> np.ndarray:
+        """Clamp scales from below without modifying the input (implementation detail).
+
+        Args:
+            std: Array of per-feature scales computed by a fitting method.
+            eps: Lower bound applied elementwise. Positivity is assumed, not checked.
+
+        Returns:
+            result: A new array containing `maximum(std, eps)`. NaNs remain NaN and are
+                rejected by subsequent construction validation.
+        """
         return np.maximum(std, eps)
 
     @classmethod
@@ -177,6 +419,27 @@ class Normalizer:
         states: np.ndarray,
         actions: np.ndarray,
     ) -> "Normalizer":
+        """Fit feature statistics across the leading axis of packed training arrays.
+
+        - Compute means and population standard deviations (`ddof=0`) using
+          NumPy's input-dtype rules.
+        - Clamp scales to at least `1e-6`, including constant features.
+        - Leave inputs unchanged; computed statistics have independent storage.
+
+        Args:
+            states: Training states, intended shape `(timesteps, state_dim)`.
+            actions: Training actions, intended shape `(timesteps, action_dim)`.
+                Equal timestep counts and two-dimensional inputs are assumptions,
+                not explicit checks; each array is reduced independently.
+
+        Returns:
+            result: A normalizer containing the computed feature statistics.
+
+        Raises:
+            ValueError: Reduced statistics are not matching nonempty vectors or
+                contain invalid values. Empty or nonfinite inputs can also emit
+                NumPy warnings before validation fails.
+        """
         state_mean = states.mean(axis=0)
         state_std = cls._safe_std(states.std(axis=0))
         action_mean = actions.mean(axis=0)
@@ -187,6 +450,36 @@ class Normalizer:
     def from_episodes_data(
         cls, episodes: Sequence[Episode] | Dataset[Episode]
     ) -> "Normalizer":
+        """Fit statistics over all timesteps in a nonempty collection of episodes.
+
+        Concatenate episodes, then delegate to
+        [from_packed_data][hw1_imitation.data.Normalizer.from_packed_data].
+
+        - Longer episodes contribute more samples to the fit.
+        - Concatenation allocates combined state/action arrays.
+        - Episode arrays are neither modified nor retained as statistics.
+
+        Args:
+            episodes: Iterable sequence or dataset of episodes with compatible
+                state feature dimensions and compatible action feature dimensions.
+
+        Returns:
+            result: A normalizer fitted to the concatenated demonstration data.
+
+        Raises:
+            ValueError: No episodes are supplied, feature shapes cannot be
+                concatenated, or the resulting statistics fail validation.
+
+        Examples:
+            Fit only on training data and reuse the resulting statistics:
+
+            ```python
+            normalizer = Normalizer.from_episodes_data(training_episodes)
+            normalized_states = normalizer.normalize_state(episode.states)
+            normalized_actions = normalizer.normalize_action(episode.actions)
+            actions = normalizer.denormalize_action(normalized_actions)
+            ```
+        """
         states = [episode.states for episode in episodes]
         actions = [episode.actions for episode in episodes]
 
@@ -198,7 +491,20 @@ class Normalizer:
         return cls.from_packed_data(states=states, actions=actions)
 
     def state_dict(self) -> dict[str, torch.Tensor]:
-        """Return independent CPU tensors for the checkpoint's explicit schema."""
+        """Export independent CPU tensors for the checkpoint schema.
+
+        Revalidate statistics before export, since their arrays can have been
+        mutated after construction. Each returned tensor owns copied numerical
+        storage relative to this normalizer.
+
+        Returns:
+            result: Mapping with `state_mean`, `state_std`, `action_mean`, and `action_std`.
+                Tensor shapes and supported NumPy dtypes are preserved.
+
+        Raises:
+            ValueError: Stored statistics no longer pass validation.
+            TypeError: A statistics dtype is unsupported by `torch.from_numpy`.
+        """
         self._validate_statistics()
         return {
             "state_mean": torch.from_numpy(self.state_mean.copy()),
@@ -209,13 +515,48 @@ class Normalizer:
 
     @classmethod
     def from_state_dict(cls, state: dict[str, torch.Tensor]) -> "Normalizer":
-        """Restore validated statistics without sharing checkpoint storage.
+        """Restore statistics without sharing checkpoint tensor storage.
 
-        These four keys are part of the checkpoint format. Changes to
-        this schema must be coordinated with the outer checkpoint version.
+        Detach each tensor, move it to CPU, convert it to NumPy, and copy it.
+        Construction validates the restored arrays.
+
+        **Checkpoint schema**
+
+        - Require the four keys listed below; ignore extra keys.
+        - Coordinate schema changes with the outer checkpoint version.
+
+        Args:
+            state: Tensor mapping containing `state_mean`, `state_std`,
+                `action_mean`, and `action_std`. Tensors must support NumPy conversion.
+
+        Returns:
+            result: A normalizer whose statistics are independent copies of the tensors.
+
+        Raises:
+            KeyError: A required key is absent.
+            ValueError: Restored statistics fail construction validation.
+            TypeError: A tensor dtype or layout cannot be converted to NumPy.
+            RuntimeError: PyTorch rejects a tensor conversion, such as unresolved
+                conjugate or negative flags.
         """
 
         def to_array(name: str) -> np.ndarray:
+            """Copy one checkpoint tensor into an independent NumPy array.
+
+            This function-local helper detaches the tensor, moves it to CPU, converts it
+            to NumPy, and copies the result. It does not itself validate statistics.
+
+            Args:
+                name: Required key in the enclosing checkpoint `state` mapping.
+
+            Returns:
+                array: Independent NumPy storage with the converted tensor's shape and dtype.
+
+            Raises:
+                KeyError: The requested entry is missing.
+                TypeError: The tensor dtype or layout cannot be converted to NumPy.
+                RuntimeError: PyTorch rejects a device transfer or tensor conversion.
+            """
             return state[name].detach().cpu().numpy().copy()
 
         return cls(
@@ -231,6 +572,19 @@ class Normalizer:
         state_dim: int,
         action_dim: int,
     ) -> None:
+        """Check statistics against the policy's expected feature dimensions.
+
+        Only shapes are checked. This does not revalidate finite values or positive
+        scales and does not modify the arrays.
+
+        Args:
+            state_dim: Expected number of state features.
+            action_dim: Expected number of action features.
+
+        Raises:
+            ValueError: Any statistics array has a shape different from its
+                expected one-dimensional feature shape.
+        """
         expected_shapes = (
             ("state_mean", self.state_mean, (state_dim,)),
             ("state_std", self.state_std, (state_dim,)),
@@ -245,6 +599,14 @@ class Normalizer:
                 )
 
     def _validate_statistics(self) -> None:
+        """Check vector shapes and finite values (implementation detail).
+
+        Each mean must be a nonempty vector with a matching scale vector; scales
+        must be strictly positive. No dtype requirement or copying is imposed.
+
+        Raises:
+            ValueError: A shape, finiteness, or positive-scale requirement fails.
+        """
         for name, mean, std in (
             ("state", self.state_mean, self.state_std),
             ("action", self.action_mean, self.action_std),
@@ -262,26 +624,28 @@ def _get_episodes_from_packed_data(
     actions: Float32Array,
     episode_ends: NDArray[np.int64],
 ) -> tuple[Episode, ...]:
-    """[Helper] Expose packed state-action arrays as read-only episode views.
+    """Expose packed data as read-only episode views (implementation detail).
+
+    Validate exclusive boundaries, then slice arrays in source order and assign
+    zero-based episode IDs. Each `Episode` validates its slice and marks that view
+    read-only. The input arrays' own writeability flags are not changed; writable
+    aliases can still mutate shared backing data.
 
     Args:
-        states: Concatenated states with shape (total_timesteps, state_dim).
-        actions: Concatenated actions with shape
-            (total_timesteps, action_dim).
-        episode_ends: Nonempty, one-dimensional integer array of exclusive
-            end offsets. Offsets must be positive, strictly increasing,
-            and end at total_timesteps.
+        states: Float32 states shaped `(total_timesteps, state_dim)`.
+        actions: Float32 actions shaped `(total_timesteps, action_dim)`.
+        episode_ends: Nonempty one-dimensional integer array. Offsets must be
+            positive, strictly increasing, and end at `total_timesteps`.
 
     Returns:
-        Episodes in source order, with IDs assigned from zero. Their arrays
-        share memory with the inputs; numerical data is not copied.
+        episodes: Tuple of episodes in source order, sharing numerical storage with
+            the input arrays. No per-episode data copy is made.
 
     Raises:
-        ValueError: Array shapes, lengths, or episode boundaries are invalid.
-        TypeError: Episode boundaries are not integers, or states/actions
-            do not use float32.
+        ValueError: Packed lengths differ, boundary rank/order/coverage is invalid,
+            or an episode's shape or timestep count is invalid.
+        TypeError: Boundary dtype is not integer or episode arrays are not float32.
     """
-
     if len(states) != len(actions):
         raise ValueError("packed states and actions must have equal lengths")
 
@@ -314,21 +678,29 @@ def _get_episodes_from_packed_data(
 
 
 def load_episodes_dataset(zarr_path: Path) -> EpisodesDataset:
-    """Load Push-T demonstrations as read-only episodes.
+    """Load Push-T arrays once and expose them as read-only episode views.
+
+    Materialize the full state/action data, split it at validated episode ends,
+    and wrap the resulting episodes in `EpisodesDataset`. Slices retain the backing
+    arrays after this function returns, avoiding per-episode copies.
+
+    Ordinary writes through episode arrays are rejected. This protects against
+    accidental mutation, not changes through other writable aliases.
 
     Args:
-        zarr_path: Path to the extracted Push-T Zarr group.
+        zarr_path: Extracted Push-T Zarr group containing packed states, actions,
+            and exclusive episode-end offsets.
 
     Returns:
-        EpisodesDataset: pytorch dataset containing Episodes
+        dataset: Dataset of episodes in source order, with zero-based episode IDs
+            and shared backing arrays.
 
-    The full state-action dataset is loaded into memory once. Episodes
-    share those backing arrays through slices, avoiding per-episode data
-    copies. The views keep their backing storage alive after this function
-    returns.
+    Raises:
+        ValueError: Loaded shapes, lengths, or episode boundaries fail validation.
+        TypeError: Episode arrays or boundary dtype fail the downstream checks.
+        KeyError: A required Zarr array path is absent.
 
-    Ordinary writes through episode arrays are rejected. This is protection
-    against accidental mutation, not a guarantee of deep immutability.
+    Storage/conversion errors and the helper's enabled type assertions propagate.
     """
     states, actions, episode_ends = _load_pusht_zarr(zarr_path=zarr_path)
     # Basic slices share storage; Episode makes these slices read-only.
@@ -342,20 +714,41 @@ def load_episodes_dataset(zarr_path: Path) -> EpisodesDataset:
 
 
 class SingleEpisodeChunks(Dataset[tuple[torch.Tensor, torch.Tensor]]):
-    """Expose one episode as current-state / future-action samples.
+    """Expose one episode as current-state and future-action training samples.
 
-    Each sample contains:
-        state: Shape (state_dim,).
-        actions: Shape (chunk_length, action_dim).
+    At timestep `t`, a sample pairs `states[t]` with actions beginning at `t`.
 
-    Without padding, only complete chunks are available. With padding,
-    every timestep is available, repeating the final action as needed.
+    **Window rules**
 
-    Source episode arrays must remain unchanged for this dataset's lifetime.
-    Normalization and padding allocate new arrays when needed; otherwise,
-    the dataset borrows the episode's arrays.
+    - Without padding, only complete windows exist. The dataset length is
+      `max(0, timesteps - chunk_length + 1)`.
+    - With padding, every original timestep is a valid start. Windows past the
+      end repeat the final action; padding creates no extra start positions.
+    - Optional normalization runs once during construction, before padding.
 
-    Returned tensors are independent copies.
+    **Storage and ownership**
+
+    - Borrow episode arrays when no transformation is needed. Normalization
+      allocates new state/action arrays; padding allocates a new action array.
+    - Keep source episode arrays unchanged for this dataset's lifetime.
+    - Each lookup returns independent float32 tensors. Changing a returned
+      sample does not affect source arrays or later samples.
+
+    Implements [PyTorch Dataset](https://docs.pytorch.org/docs/stable/data.html#torch.utils.data.Dataset).
+    Use [EpisodeChunkDataset][hw1_imitation.data.EpisodeChunkDataset] to combine
+    episodes without crossing boundaries.
+
+    Attributes:
+        _chunk_length: Implementation detail: positive number of actions in
+            each sample, retained from the constructor.
+        _length: Implementation detail: number of valid sample starts, computed
+            once from episode length, chunk length and padding mode.
+        _states: Implementation detail: state rows used for lookup. Borrowed
+            from the episode or independently computed by normalization.
+        _actions: Implementation detail: action rows used for windows. Borrowed
+            unless normalization or padding allocates a replacement array.
+        _episode_id: Implementation detail: original episode identifier exposed
+            by the `episode_id` property.
     """
 
     def __init__(
@@ -366,7 +759,29 @@ class SingleEpisodeChunks(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         pad_action_chunk: bool = False,
         normalizer: Normalizer | None = None,
     ) -> None:
-        """Set up one episode with normalization and padding."""
+        """Prepare episode-local windows, optionally normalizing and padding once.
+
+        1. If supplied, check the normalizer's dimensions against the episode
+           and normalize the arrays. Statistics are not revalidated for finite
+           or positive values here.
+        2. If requested, pad with the final action after normalization.
+
+        Neither source array is modified; the normalizer itself is not retained.
+
+        Args:
+            episode: Demonstration supplying aligned state/action arrays and its ID.
+            chunk_length: Positive Python integer specifying actions per window.
+                Boolean values are explicitly rejected.
+            pad_action_chunk: Whether to repeat the final action so every episode
+                timestep has a complete window.
+            normalizer: Statistics to apply to the episode's states and actions.
+                `None` leaves them in their original coordinates.
+
+        Raises:
+            TypeError: `chunk_length` is not a Python integer or is a boolean.
+            ValueError: `chunk_length` is not positive, or the normalizer's state
+                or action dimensions differ from the episode's.
+        """
         if isinstance(chunk_length, bool) or not isinstance(chunk_length, int):
             raise TypeError("chunk_length must be an integer")
         if chunk_length <= 0:
@@ -408,20 +823,39 @@ class SingleEpisodeChunks(Dataset[tuple[torch.Tensor, torch.Tensor]]):
 
     @property
     def state_dim(self) -> int:
-        """Number of features in each state."""
+        """Return the feature count of the prepared state rows.
+
+        Returns:
+            count: Number of columns in `_states`.
+        """
         return self._states.shape[1]
 
     @property
     def action_dim(self) -> int:
-        """Number of components in each action."""
+        """Return the feature count of the prepared action rows.
+
+        Returns:
+            count: Number of columns in `_actions`.
+        """
         return self._actions.shape[1]
 
     @property
     def episode_id(self) -> int:
+        """Return the original episode's identifier.
+
+        Returns:
+            identifier: Identifier copied from the episode during construction;
+                it is not inferred from an index or validated here.
+        """
         return self._episode_id
 
     def __len__(self) -> int:
-        """Return the number of valid chunk starts."""
+        """Return the number of valid window starts.
+
+        Returns:
+            count: Stored sample count. This can be zero when the episode is shorter
+                than the chunk length and padding is disabled.
+        """
         return self._length
 
     def __getitem__(
@@ -429,6 +863,25 @@ class SingleEpisodeChunks(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         index: int,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         # Handle -ve index : wrap around.
+        """Copy one current-state and action-window pair into float32 tensors.
+
+        Args:
+            index: Integer start position. Negative indices count from the end of
+                this dataset's valid starts; slices are not supported.
+
+        Returns:
+            sample: A pair containing a state tensor shaped `(state_dim,)` and an
+                action tensor shaped `(chunk_length, action_dim)`. Both are new
+                float32 tensors independent of stored arrays and other samples.
+                Coordinates are normalized only if a normalizer was supplied.
+
+        Raises:
+            IndexError: The index is outside `[-len(self), len(self))`; every index
+                fails when this dataset is empty. NumPy also raises IndexError for
+                unsupported scalar indices such as an in-range float.
+            TypeError: An index such as a slice cannot be compared with integers,
+                or an unsupported type reaches NumPy slicing.
+        """
         if index < 0:
             index += self._length
         if not 0 <= index < self._length:
@@ -446,14 +899,37 @@ class SingleEpisodeChunks(Dataset[tuple[torch.Tensor, torch.Tensor]]):
 
 
 class EpisodeChunkDataset(ConcatDataset[tuple[torch.Tensor, torch.Tensor]]):
-    """Combine episode-local windows into one indexed dataset.
+    """Concatenate episode-local training windows without crossing boundaries.
 
-    Each child handles one episode, so windows cannot cross episode
-    boundaries. ConcatDataset supplies length and global index routing.
+    **Construction rules**
 
-    Raises:
-        ValueError: No episodes are supplied, dimensions differ between children,
-            or no valid windows exist.
+    - Build one [SingleEpisodeChunks][hw1_imitation.data.SingleEpisodeChunks]
+      child per episode, in input order.
+    - Require matching state and action feature dimensions across all children.
+    - Allow unpadded short episodes to contribute zero samples, provided at
+      least one valid sample remains in the combined dataset.
+
+    **Indexing and ownership**
+
+    - [PyTorch ConcatDataset](https://docs.pytorch.org/docs/stable/data.html#torch.utils.data.ConcatDataset)
+      supplies `__len__`, `__getitem__`, the child `datasets` collection, and
+      cumulative index routing. Those implementations are not repeated here.
+    - Valid negative indices count from the combined dataset's end. In the
+      installed implementation, indices below `-len(self)` raise `ValueError`;
+      nonnegative indices at or above `len(self)` raise `IndexError`.
+    - Children borrow arrays or compute replacements as described by
+      `SingleEpisodeChunks`; the episodes are not copied wholesale. Keep source
+      storage unchanged while using the dataset.
+    - Returned state/action tensors are independent float32 copies.
+
+    See [constructor][hw1_imitation.data.EpisodeChunkDataset.__init__] for a worked
+    construction example.
+
+    Attributes:
+        _state_dim: Implementation detail: state feature count shared by all
+            children and exposed through `state_dim`.
+        _action_dim: Implementation detail: action feature count shared by all
+            children and exposed through `action_dim`.
     """
 
     def __init__(
@@ -464,6 +940,41 @@ class EpisodeChunkDataset(ConcatDataset[tuple[torch.Tensor, torch.Tensor]]):
         normalizer: Normalizer | None = None,
         pad_action_chunk: bool = False,
     ) -> None:
+        """Construct compatible child datasets and require a nonempty combined result.
+
+        - Each child applies normalization and padding independently.
+        - Check dimensions even for episodes that produce zero windows.
+        - Iterate the input sequence once and retain the child datasets, not
+          the original sequence.
+
+        Args:
+            episodes: Nonempty sequence or dataset of episodes in concatenation order.
+            chunk_length: Positive Python integer specifying actions per window.
+                Passed to every child; boolean values are rejected.
+            normalizer: Shared statistics applied to every child, or `None` for
+                original state/action coordinates. Feature dimensions must match.
+            pad_action_chunk: Whether each child repeats its own final action to
+                complete windows beginning near its end.
+
+        Raises:
+            ValueError: No episodes are supplied, episode dimensions disagree,
+                a child rejects the chunk length or normalizer dimensions, or no
+                valid windows remain after all children are constructed.
+            TypeError: A child rejects a non-integer or boolean chunk length.
+
+        Examples:
+            Fit statistics on the training subset, then construct normalized windows
+            from that same subset:
+
+            ```python
+            normalizer = Normalizer.from_episodes_data(training_episodes)
+            windows = EpisodeChunkDataset(
+                training_episodes, chunk_length=8, normalizer=normalizer,
+                pad_action_chunk=True,
+            )
+            state, actions = windows[0]
+            ```
+        """
         children = []
         expected_dimensions: tuple[int, int] | None = None
 
@@ -502,10 +1013,18 @@ class EpisodeChunkDataset(ConcatDataset[tuple[torch.Tensor, torch.Tensor]]):
 
     @property
     def state_dim(self) -> int:
-        """State dimension shared by all child datasets."""
+        """Return the state feature count shared by every child dataset.
+
+        Returns:
+            count: State dimension recorded during construction.
+        """
         return self._state_dim
 
     @property
     def action_dim(self) -> int:
-        """Action dimension shared by all child datasets."""
+        """Return the action feature count shared by every child dataset.
+
+        Returns:
+            count: Action dimension recorded during construction.
+        """
         return self._action_dim

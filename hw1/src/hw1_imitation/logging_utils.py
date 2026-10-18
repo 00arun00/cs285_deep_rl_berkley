@@ -1,12 +1,17 @@
-"""Format console summaries, write local outputs, and report to W&B.
+"""Format startup summaries, encode videos, and record experiment metrics.
 
-Video encoding and metric logging are independent operations. Evaluation
-uses ``open_video_writer`` to create files; ``ExperimentLogger`` records
-measurements and references to files that already exist.
+**Output workflow**
 
-The caller owns experiment directories, file retention, and W&B lifetime.
-One process must own each experiment directory. Resume and concurrent
-writes are not supported.
+1. Build a console table with
+   [build_training_summary][hw1_imitation.logging_utils.build_training_summary].
+2. Stream evaluation frames through
+   [open_video_writer][hw1_imitation.logging_utils.open_video_writer].
+3. Submit measurements and completed-file references through
+   [ExperimentLogger][hw1_imitation.logging_utils.ExperimentLogger].
+
+Video encoding and metric logging are independent. The caller owns experiment
+directories, file retention, and W&B lifetime. Use one process per experiment
+directory; concurrent writes and resuming existing metric files are unsupported.
 """
 
 from __future__ import annotations
@@ -49,7 +54,30 @@ def build_training_summary(
     validation_samples: int,
     steps_per_epoch: int,
 ) -> Table:
-    """Format TrainConfig and resolved runtime facts for the startup display."""
+    """Build a Rich startup table from configuration and resolved runtime facts.
+
+    Architecture and dropout come from the actual model, including loaded policies;
+    training settings come from `config`. Paths are resolved for display without
+    creating directories. This helper returns a table rather than printing it.
+    It does not validate that supplied counts match the data or that paths exist.
+
+    Args:
+        config: Training settings controlling the displayed budget and options.
+        model: Policy supplying actual architecture, trainable parameter count,
+            and current per-layer dropout probabilities.
+        run_name: Display name for the experiment.
+        device: Human-readable device description.
+        output_dir: Experiment output directory displayed as an absolute path.
+        dataset_path: Dataset path displayed as an absolute path.
+        train_episodes: Number of training episodes.
+        validation_episodes: Number of validation episodes.
+        train_samples: Number of training windows.
+        validation_samples: Number of validation windows.
+        steps_per_epoch: Optimizer steps per epoch, used to display the total budget.
+
+    Returns:
+        table: Newly constructed Rich table ready for the caller to render.
+    """
     architecture = model.config
     table = Table(
         title="Push-T · Training summary",
@@ -222,27 +250,37 @@ def open_video_writer(
     *,
     fps: int = 20,
 ) -> Iterator[Format.Writer]:
-    """Stream frames into a new MP4 file and close its encoder on exit.
+    """Yield an MP4 encoder and close it when the context exits.
 
-    The caller supplies RGB uint8 frames with consistent, even dimensions
-    through ``writer.append_data(frame)``.
+    Supply consistent RGB uint8 frames with positive, even dimensions through
+    `writer.append_data(frame)`. Encoding uses FFMPEG/libx264 with yuv420p and no
+    macroblock-size adjustment; frame compatibility is delegated to the encoder.
 
-    Frames are written directly to the destination. A failure or process
-    interruption may leave a partial file. Callers must record the path
-    as successful only after this context exits normally.
+    **File lifecycle**
+
+    - Write directly to a new destination inside an existing directory.
+    - Close the writer on context exit, including exceptions from the caller's body.
+    - After normal closure, require a nonempty output file. This checks existence
+      and size, not whether every frame is decodable.
+    - Failures can leave partial files. Treat the path as successful only after
+      normal context exit. The existence check is not a concurrent-writer lock.
 
     Args:
-        path: New MP4 file inside an existing caller-owned directory.
-        fps: Positive playback frame rate.
+        path: New `.mp4` destination; extension matching is case-insensitive.
+        fps: Positive playback frame rate. Only the positive bound is checked here.
+
+    Yields:
+        writer: ImageIO writer accepting frames through `append_data`. The caller
+            borrows it only inside the context; this helper manages closure.
 
     Raises:
-        ValueError: The frame rate or filename extension is invalid.
-        NotADirectoryError: The parent directory does not exist.
+        ValueError: Frame rate is nonpositive or the extension is not `.mp4`.
+        NotADirectoryError: The parent directory is missing or is not a directory.
         FileExistsError: The destination already exists.
-        RuntimeError: Encoding produced no output data.
+        RuntimeError: Normal closure produced no file or an empty file.
 
-    Filesystem and encoder errors propagate. The existence check assumes
-    one writer; it is not a concurrency lock.
+    Filesystem, encoder, and caller-body errors propagate. The post-closure output
+    check is skipped if the body or writer closure raises.
     """
     if fps <= 0:
         raise ValueError("fps must be positive")
@@ -272,17 +310,34 @@ def open_video_writer(
 
 
 class ExperimentLogger:
-    """Write scalar metrics locally and mirror them to an optional W&B run.
+    """Write metric rows locally and mirror scalars to an optional W&B run.
 
-    Each logging call appends one CSV row when log_csv is enabled.
-    If a W&B run is supplied, the same scalar values are also submitted to the run.
+    **Reporting contract**
 
-    CSV writes happen prior to W&B submissions.
-    These operations are not atomic.
-    i.e. a W&B failure can occur after the CSV row has been written.
+    - Append one CSV row per logging call when local logging is enabled, then
+      submit to W&B when a run is supplied. The operations are not atomic: remote
+      failure can follow a successful local append.
+    - Keep reporting single-process. There is no retry, deduplication, or resume
+      support, and metric values are not validated for range or finiteness.
+    - Record references to completed videos without acquiring deletion ownership.
+      The caller also remains responsible for finishing the W&B run.
 
-    The logger is intended for periodic reporting from a single training process.
-    It does not provide retry, deduplication or resume behavior.
+    Attributes:
+        TRAIN_FIELDS: Ordered CSV schema for optimizer step, epoch, mean training
+            loss over the reporting window, and contributing example count.
+        VALIDATION_FIELDS: Ordered CSV schema for step, mean validation loss, and
+            contributing example count.
+        EVAL_FIELDS: Ordered CSV schema for step, rollout score, episode count,
+            and JSON-encoded relative video paths.
+        FINAL_EVAL_FIELDS: Ordered CSV schema for final evaluation, selected
+            checkpoint metadata, and the CSV-only stop reason.
+        log_csv: Whether to create metric CSVs and append local rows.
+        directory: Resolved caller-owned experiment directory.
+        train_path: Local `train.csv` destination.
+        eval_path: Local `eval.csv` destination.
+        validation_path: Local `validation.csv` destination.
+        final_eval_path: Local `final_eval.csv` destination.
+        run: Optional W&B run reference; this logger neither creates nor finishes it.
     """
 
     TRAIN_FIELDS: tuple[str, ...] = (
@@ -318,17 +373,25 @@ class ExperimentLogger:
         *,
         log_csv: bool = True,
     ) -> None:
-        """Create metric files in an existing experiment directory.
+        """Prepare metric paths, optionally create CSVs, and define W&B metric axes.
+
+        Require an existing directory even when CSV logging is disabled. When enabled,
+        create each file exclusively and write its header; existing files are never
+        intentionally overwritten. A later failure may leave earlier files created.
+
+        If a run is provided, define `global_step` and the `train/*`, `validation/*`,
+        `eval/*`, and `final/*` metric namespaces. Remote setup errors propagate.
 
         Args:
-            directory: Caller-owned experiment directory. When CSV logging is
-                enabled, metric CSV files must not already exist.
-            run: Active W&B run, or None to disable W&B reporting.
-            log_csv: Create and append local metric CSV files.
-        The caller remains responsible for finishing the run.
+            directory: Caller-owned experiment directory. Metric files must not already
+                exist when CSV logging is enabled.
+            run: Active W&B run, or `None` to disable remote reporting.
+            log_csv: Whether to create and append local metric files.
 
-        Initialization errors propagate and may leave partially created
-        files. Existing records are never intentionally overwritten.
+        Raises:
+            NotADirectoryError: The resolved experiment directory is missing or not a directory.
+            FileExistsError: A metric file already exists during exclusive creation.
+            OSError: Resolving or creating local output fails.
         """
         self.log_csv = log_csv
         self.directory = directory.resolve()
@@ -365,7 +428,22 @@ class ExperimentLogger:
         fields: tuple[str, ...],
         row: Mapping[str, RecordValue],
     ) -> None:
-        """Append a CSV row when local metric logging is enabled."""
+        """Append one CSV row when local logging is enabled (implementation detail).
+
+        Open and close the file on each call. Disabled logging returns before opening
+        it. Missing row fields become empty CSV cells; extra fields are rejected.
+        If the file was removed, append mode recreates it without a header.
+        No value validation or rollback is added.
+
+        Args:
+            path: Destination opened in append mode; normally an initialized metric file.
+            fields: Ordered field names used by `csv.DictWriter`.
+            row: Values to serialize. Extra keys are rejected by the CSV writer.
+
+        Raises:
+            ValueError: The row contains keys outside `fields`.
+            OSError: Opening or writing the file fails.
+        """
         if not self.log_csv:
             return
 
@@ -379,11 +457,21 @@ class ExperimentLogger:
         metrics: Mapping[str, Scalar],
         video_paths: Sequence[Path] = (),
     ) -> None:
-        """Submit metrics and existing videos without taking file ownership.
+        """Submit scalar metrics and video references (implementation detail).
 
-        Successful submission does not guarantee remote synchronization.
+        Do nothing when no run is supplied. Otherwise prefix metric names with
+        `namespace`, retain a single unprefixed `global_step`, and attach videos as
+        `<namespace>/rollout_ep<index>`. A `global_step` entry in `metrics` is ignored
+        in favor of the explicit argument.
 
-        NOTE: This is mostly a dumb utility function
+        Submission does not guarantee remote synchronization. W&B/media errors
+        propagate; this helper neither validates video paths nor takes file ownership.
+
+        Args:
+            namespace: Metric prefix, normally `train`, `validation`, `eval`, or `final`.
+            global_step: Step coordinate submitted as the common metric axis.
+            metrics: Scalar values to prefix and submit.
+            video_paths: Existing MP4 files wrapped as `wandb.Video` in sequence order.
         """
         if self.run is None:
             return
@@ -415,7 +503,17 @@ class ExperimentLogger:
         loss_window_mean: float,
         window_examples_count: int,
     ) -> None:
-        """Record training metrics"""
+        """Record a training-window summary in CSV and the `train` namespace.
+
+        The caller computes the aggregate; this method does not accumulate batches.
+        CSV append precedes remote submission under the class reporting contract.
+
+        Args:
+            global_step: Optimizer step at the end of the reporting window.
+            epoch: Epoch index associated with the report.
+            loss_window_mean: Caller-computed mean training loss over the window.
+            window_examples_count: Number of examples contributing to that mean.
+        """
         metrics = {
             "global_step": global_step,
             "epoch": epoch,
@@ -434,6 +532,16 @@ class ExperimentLogger:
         loss_mean: float,
         examples_count: int,
     ) -> None:
+        """Record a validation summary in CSV and the `validation` namespace.
+
+        CSV append precedes remote submission; failures and retry limitations follow
+        the class reporting contract.
+
+        Args:
+            global_step: Optimizer step associated with this validation pass.
+            loss_mean: Caller-computed example-weighted mean validation loss.
+            examples_count: Total examples contributing to the validation mean.
+        """
         metrics = {
             "global_step": global_step,
             "loss_mean": loss_mean,
@@ -461,8 +569,19 @@ class ExperimentLogger:
         selection_mean_reward: float,
         stop_reason: str,
     ) -> None:
-        """Record final evaluation metrics."""
+        """Record final rollout results and the selected checkpoint's metadata.
 
+        Append all fields to CSV, then send numeric metrics to the `final` namespace.
+        `stop_reason` is CSV-only and is not included in the W&B payload.
+
+        Args:
+            global_step: Training step at which the final report is made.
+            mean_reward: Final mean of per-episode maximum rewards.
+            num_episodes: Number of episodes in final evaluation.
+            checkpoint_step: Step of the selected checkpoint being evaluated.
+            selection_mean_reward: Earlier score used to select that checkpoint.
+            stop_reason: Caller-provided reason training ended; recorded as CSV text.
+        """
         metrics: dict[str, Scalar] = {
             "global_step": global_step,
             "mean_reward": mean_reward,
@@ -493,8 +612,30 @@ class ExperimentLogger:
         num_episodes: int,
         video_paths: Sequence[Path] = (),
     ) -> None:
-        """Record evaluation metrics and completed local video references."""
+        """Record rollout metrics and references to completed local videos.
 
+        Resolve video paths and require each to be a file within the experiment
+        directory after symlink resolution, even for W&B-only reporting. Video
+        decodability is not checked. Store relative POSIX paths as a JSON
+        array in CSV; pass resolved files to W&B. Files are not moved or deleted.
+
+        When both reporting sinks are disabled, return without validating paths.
+        Otherwise all path checks precede CSV append and subsequent W&B submission.
+
+        Args:
+            global_step: Optimizer step associated with this evaluation.
+            mean_reward: Mean of per-episode maximum rewards, computed by the caller.
+            num_episodes: Number of completed evaluation episodes.
+            video_paths: Completed video files in report order. Relative paths resolve
+                from the current working directory, not automatically from `directory`.
+
+        Raises:
+            FileNotFoundError: A resolved path is missing or is not a regular file.
+            ValueError: A resolved video path lies outside the experiment directory.
+
+        Filesystem and W&B/media errors propagate; a remote failure may follow a
+        successful CSV append.
+        """
         if not self.log_csv and self.run is None:
             return
 
