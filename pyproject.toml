@@ -5,5 +5,11 @@ description = "Documentation tooling, independent of training environments"
 requires-python = ">=3.11"
 dependencies = ["zensical>=0.0.68,<0.1", "mkdocstrings-python>=1.18,<3"]
 
+[dependency-groups]
+publishing = ["mike"]
+
+[tool.uv.sources]
+mike = { git = "https://github.com/squidfunk/mike.git", rev = "2d4ad799442f4592db8ad53b179bfb33db8c69ac" }
+
 [tool.uv]
 package = false

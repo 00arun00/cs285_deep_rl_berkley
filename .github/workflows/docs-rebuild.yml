@@ -1,0 +1,87 @@
+name: Rebuild and publish preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      snapshot_id:
+        description: "Snapshot RUN_ID-ATTEMPT. Rebuilds exact source and approves its publication, including fork content."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.snapshot.outputs.sha }}
+      record: ${{ steps.snapshot.outputs.record }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Resolve the durable snapshot without executing its source
+        id: snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SNAPSHOT_ID: ${{ inputs.snapshot_id }}
+        run: python scripts/docs_snapshot.py "$SNAPSHOT_ID" --output "$RUNNER_TEMP/snapshot.json"
+
+  build:
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Historical/fork source and dependencies execute only in this read-only job.
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: source
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          path: source
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          path: tooling
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.8"
+          python-version: "3.13"
+          enable-cache: false
+      - name: Write approved build context
+        env:
+          SNAPSHOT_RECORD: ${{ needs.resolve.outputs.record }}
+        run: |
+          python -c 'import os,pathlib; pathlib.Path(os.environ["RUNNER_TEMP"], "snapshot.json").write_text(os.environ["SNAPSHOT_RECORD"])'
+      - run: uv sync --locked
+      - run: uv tool install ruff==0.14.10
+      - run: uv run --no-sync python -m unittest discover -s scripts/tests -v
+      - run: uv run --no-sync python ../tooling/scripts/build_docs.py --snapshot "$RUNNER_TEMP/snapshot.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: docs-site-${{ github.run_attempt }}
+          path: source/docs-artifact/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: [resolve, build]
+    permissions:
+      contents: write
+      actions: read
+      pages: write
+      id-token: write
+      pull-requests: write
+    uses: ./.github/workflows/docs-publish.yml
+    with:
+      snapshot_id: ${{ inputs.snapshot_id }}

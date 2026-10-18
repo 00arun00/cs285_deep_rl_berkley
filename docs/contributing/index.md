@@ -13,7 +13,7 @@ uv run --no-sync zensical serve
 uv run --no-sync zensical build --strict
 ```
 
-The site is written to `site/`. Documentation CI runs the rendering tests and strict build on every PR and on pushes to `main`. Whole-source completeness enforcement will be enabled after the source documentation is complete. Documentation dependencies are isolated from each training project's environment.
+The site is written to `site/`. Documentation CI runs the rendering tests and strict build on every PR, on pushes to `main`, and on published releases. A separate trusted workflow publishes successful artifacts. Whole-source completeness enforcement will be enabled after the source documentation is complete. Documentation dependencies are isolated from each training project's environment.
 
 ## Add a page
 
@@ -100,7 +100,150 @@ possible runtime object, or replace desktop/mobile rendered review.
 
 ## Maintain the theme
 
-Navigation, search, code controls, and the light/dark toggle are native Zensical features. `docs/stylesheets/theme.css` customizes the palette, system font stacks, spacing, and borders. The shared mkdocstrings templates in `docs-overrides/python/material/` combine structured Python attribute docstrings with source annotations and defaults when `options.extra.documented_fields` is enabled. Generated modules enable this strategy globally; the preserved comparison page opts in locally. A small function wrapper omits synthesized methods without source lines and labels private methods. Parameter, return, and exception sections use native lists to remain readable on mobile. Other rendering remains native. There is no custom JavaScript.
+Navigation, search, code controls, and the light/dark toggle are native Zensical features. `docs/stylesheets/theme.css` customizes the palette, system font stacks, spacing, and borders. The shared mkdocstrings templates in `docs-overrides/python/material/` combine structured Python attribute docstrings with source annotations and defaults when `options.extra.documented_fields` is enabled. Generated modules enable this strategy globally; the preserved comparison page opts in locally. A small function wrapper omits synthesized methods without source lines and labels private methods. Parameter, return, and exception sections use native lists to remain readable on mobile. Other rendering remains native. `docs-theme/main.html` adds a build/channel announcement to published pages using the native announcement block. There is no custom JavaScript.
 
 Check both color modes and narrow screens when changing that stylesheet.
 
+## Publish documentation
+
+The public site uses GitHub Pages at
+`https://00arun00.github.io/cs285_deep_rl_berkley/`.
+
+| Path | Source | Lifecycle |
+| --- | --- | --- |
+| `/latest/` | Latest successful build of the current `main` commit | Updated after merges |
+| `/v1.0.0/` | Published release tag `v1.0.0` | Immutable snapshot |
+| `/stable/` | Highest published semantic release | Per-page redirects preserve deep links |
+| `/previews/pr-38/` | Successful PR build (GitHub's merge snapshot) | Removed on close/merge or expiry; manual rebuilds can restore it |
+| `/` | Redirect to `/latest/` | Permanent entry point |
+
+The release workflow supports published, non-prerelease tags named
+`vMAJOR.MINOR.PATCH`. Merely pushing a tag does not publish docs: publish its
+GitHub Release. The tagged commit must contain the documentation build workflow
+and its locked tooling. Older versions remain available in the version selector;
+PR previews are excluded from that selector. Each published page identifies its
+channel and actual build commit. PR build records also retain the PR head and base
+commit. Preview pages carry `noindex, nofollow` metadata.
+
+### One-time setup and the first deployment
+
+1. In repository **Settings → Pages**, set **Source → GitHub Actions**.
+2. Enable Actions for this repository if GitHub disabled them when it was forked.
+3. In **Settings → Environments → github-pages**, restrict deployment branches to
+   `main`. The publishing workflow runs in the default-branch context even when
+   handling a release or PR build. No personal access token is required, and
+   default workflow token permissions may remain read-only.
+4. Merge the reviewed publishing workflow into `main`. The resulting main build
+   publishes `/latest/`. Before that merge, the infrastructure PR can validate
+   and upload its artifact but cannot trigger its own trusted publisher.
+5. Verify the **Publish documentation** run and the live site. Existing open PRs
+   need a new successful Documentation build or a manual publisher dispatch.
+
+The publishing workflow and scripts always come from `main`; it never checks
+out or executes PR or release source in its privileged job. The read-only build
+job uploads static output. The publisher validates the workflow/run, current PR
+head or release tag, metadata and archive paths before consuming it. A PR cannot
+choose its deployment directory. For PRs, GitHub's recorded revision of the
+locally called build workflow must match the artifact's merge SHA. Builds without
+that provenance must be rebuilt with the updated workflow. Pages publication is serialized with queued
+runs. Automatic builds for superseded PR heads are skipped. A late build can
+restore a closed PR preview; expiry cleanup handles this accepted race. All output is retained on the
+machine-managed `gh-pages` branch; avoid editing that branch manually.
+
+### Rebuild and publish a preview
+
+Automatic PR builds use GitHub's synthetic merge checkout: the PR changes combined
+with its target branch. Main builds use the current main commit; release builds
+use the tagged commit. Build success and publication are separate operations.
+Publication is asynchronous and does not need to finish before merging.
+
+Every successful PR build processed by the publisher records a snapshot named
+`RUN_ID-ATTEMPT`, for example `123456789-1`. Find this ID in the preview comment or
+the publisher's **Validate artifact and assemble all published versions** log.
+Unapproved fork builds also get records; their IDs appear in that log. Records
+live under `.docs-state/snapshots/` on `gh-pages`, independently of expiring build
+artifacts and preview pages. A failed build does not produce a rebuildable record.
+
+To rebuild that exact source, including after the PR closes or merges:
+
+1. Open **Actions → Rebuild and publish preview → Run workflow**.
+2. Choose branch **main** and enter the snapshot ID.
+3. Run the workflow. This explicitly approves publication of that snapshot,
+   including content from an external fork.
+
+The workflow checks out the recorded merge commit, installs its locked build
+requirements, and runs the documentation checks and build. It publishes to the
+same `previews/pr-N/` URL and updates the PR comment. This is a fresh build of the
+recorded source, not a new merge against today's main. If the commit can no longer
+be retrieved or its dependencies no longer build, the operation fails without
+substituting another commit. Old builds without snapshot records are unsupported.
+
+Historical source executes in a read-only job without publishing credentials.
+The publisher runs separately using trusted main scripts. The manual workflow
+has no 30-day rerun-window restriction; it still depends on source availability.
+
+### Fork approval and retries
+
+PRs from branches within this repository publish automatically, even when this
+repository itself is a fork. PRs from an external fork require publication
+approval regardless of their target branch. Approval applies to the exact PR
+snapshot: retries of that snapshot reuse approval, but a changed head or merge
+snapshot needs fresh approval. GitHub's approval to run a fork build is separate.
+
+An ordinary **Re-run all jobs** retries the original build and does not grant
+fork-publication approval. GitHub limits native reruns to 30 days after the
+original run. Use **Rebuild and publish preview** for older recorded snapshots.
+
+To approve or retry publication of an existing successful artifact without
+rebuilding, open **Publish documentation → Run workflow** on **main**, select
+`publish`, and enter its Documentation run ID. The latest attempt must have
+succeeded. This action also approves its exact fork snapshot and can restore a
+closed PR's preview. Artifacts expire after 14 days; use the recorded snapshot
+rebuild when the artifact is gone. An obsolete main build cannot replace current
+main documentation. To retry a failed manual rebuild's publisher, rerun its failed
+jobs; the publisher can reuse that workflow run's already-successful build artifact.
+
+A failed build leaves the last published preview intact. A failed deployment does
+not advance the preview's publication timestamp. The publisher retains pending
+state so a later deployment can finish it. Failed PR-comment updates are retained
+for retry independently of the website deployment. A comment API failure emits
+a warning and does not prevent deployment or updates to other PR comments.
+
+### Remove and expire previews
+
+Closing or merging a PR queues automatic removal of its preview. Cleanup checks
+that the PR is still closed before proceeding. A later explicit rebuild can
+restore the preview; a late automatic publication can also restore it. Both then
+follow the same expiry rule.
+
+A daily cleanup runs at **03:17 UTC**. It removes previews whose last successful
+publication is more than **30 days** old, whether their PRs are open or closed.
+Set the repository Actions variable `DOCS_PREVIEW_RETENTION_DAYS` to a positive
+integer to change the retention period. PR creation time is not used. Successful
+publication resets the clock; failed builds and deployments do not.
+
+For an immediate expiry sweep, open **Publish documentation → Run workflow** on
+**main**, select `cleanup`, and leave the run ID empty. This uses exactly the daily
+cleanup logic. To retry immediate removal after a failed close/merge event, rerun
+that event's failed **Publish documentation** job; an expiry sweep intentionally
+does not remove a recent preview merely because its PR is closed.
+
+Cleanup removes preview files and updates their comments. Main/release versions,
+snapshot records, and approvals are retained. Removal from the current site does
+not erase Git history. Existing previews without timestamps get one retention
+period from their first successful migration deployment. If a deployment's final
+bookkeeping fails, a subsequent deployment recovers its pending state before
+expiry is considered.
+
+### Publishing implementation
+
+`mike` is pinned to the Zensical-compatible fork in the optional `publishing`
+dependency group. It manages the version inventory, aliases, redirects and git
+commits. `scripts/build_docs.py` supplies the URL prefix and announcement metadata,
+then runs the strict build. Whole-source completeness enforcement will be enabled after the source documentation is complete. `scripts/publish_docs.py` uses
+the pinned mike API to publish already-built files; it deliberately does not use
+`mike deploy`, which would execute a build in the privileged job. Durable snapshot,
+approval, pending-deployment and publication records live in `.docs-state/` on
+`gh-pages`; these internal records are excluded from the Pages artifact. Updates to mike
+must revalidate that API. The publishing job alone receives branch-write, Pages,
+OIDC, artifact-read and PR-comment permissions.

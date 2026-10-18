@@ -7,6 +7,7 @@ extra_css = ["stylesheets/theme.css", "stylesheets/diagrams.css"]
 extra_javascript = ["javascripts/diagrams.js"]
 
 [project.theme]
+custom_dir = "docs-theme"
 variant = "modern"
 font = false
 features = ["navigation.tabs", "navigation.sections", "navigation.indexes", "navigation.top", "navigation.footer", "content.code.copy", "content.code.annotate", "content.tabs.link", "search.highlight"]
