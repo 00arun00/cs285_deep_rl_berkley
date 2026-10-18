@@ -1,4 +1,20 @@
-"""Train and evaluate a Push-T imitation policy."""
+"""Run Push-T imitation training, checkpoint selection, and final evaluation.
+
+**Run lifecycle**
+
+1. Parse [TrainConfig][hw1_imitation.train.TrainConfig], load demonstrations,
+   and split whole episodes into training and validation subsets.
+2. Initialize a policy and training-only normalization, or load both from a
+   checkpoint. Always start a fresh optimizer and training-step counter.
+3. Train while reporting metrics, validating, and evaluating rollout scores.
+   Retain checkpoints and optionally stop when improvement plateaus.
+4. Reload the highest-scoring currently tracked checkpoint and evaluate it with
+   separate final-evaluation streams and budget.
+
+[run_training][hw1_imitation.train.run_training] owns the experiment directory,
+logging contexts, and temporary checkpoint lifetime. This is a training driver,
+not an optimizer/RNG-state resume mechanism.
+"""
 
 from __future__ import annotations
 
@@ -45,6 +61,96 @@ LOG_ROOT = "exp"
 
 @dataclass(frozen=True, slots=True)
 class TrainConfig:
+    """Configure a Push-T imitation-learning training run.
+
+    Architecture settings apply only to fresh policies. Training settings also
+    apply when initializing from a checkpoint; loading does not resume the
+    optimizer or the training-step counter.
+
+    Attributes:
+        init_from: Checkpoint used to initialize the policy and normalizer. A loaded
+            policy supplies its architecture; optimizer state and training step start
+            fresh.
+        policy_type: Policy family for a fresh model: mean-squared-error imitation or
+            flow matching. Ignored when loading a checkpoint.
+        hidden_dims: Hidden-layer widths for a fresh policy. Ignored when loading a
+            checkpoint.
+        chunk_size: Number of actions predicted per observation by a fresh policy.
+            Loaded policies retain their own prediction horizon.
+        data_dir: Root directory used to find, download, and extract the Push-T dataset.
+        pad_action_chunk_with_last_action: Pad incomplete action chunks with the
+            episode’s final action when preparing training and validation samples.
+        num_epochs: Maximum number of training epochs. Plateau stopping can end the run
+            earlier.
+        batch_size: Batch size for training and validation. Training drops the final
+            incomplete batch; validation retains it.
+        lr: Learning rate passed to the fresh AdamW optimizer.
+        weight_decay: Weight-decay coefficient passed to AdamW.
+        dropout_p: Override the policy’s dropout probability. None preserves loaded
+            dropout settings; a fresh policy uses zero dropout.
+        validation_interval: Optimizer steps between complete validation-loss passes.
+            Validation also runs on the last scheduled training step.
+        eval_interval: Optimizer steps between rollout evaluations used for checkpoint
+            selection and plateau stopping. Selection evaluation also runs on the last
+            scheduled training step.
+        eval_episodes: Number of environment episodes in each checkpoint-selection
+            evaluation.
+        final_eval_episodes: Number of episodes in the separate final evaluation of the
+            best retained checkpoint.
+        early_stopping_patience: Consecutive selection evaluations without sufficient
+            rollout-reward improvement before stopping, after warm-up. None disables
+            plateau stopping.
+        early_stopping_min_epochs: Warm-up duration converted to optimizer steps using
+            the training-loader length. Stale evaluations count only after that step
+            threshold.
+        early_stopping_min_delta: Rollout-reward gain that must be strictly exceeded to
+            reset patience. Small gains can accumulate against the last reference reward.
+        save_checkpoints: Keep checkpoints in the experiment directory. If false,
+            checkpoints are still written to a temporary directory, removed after
+            success and retained after failure; W&B uploads are controlled separately.
+        checkpoint_top_k: Number of best rollout-scored checkpoints retained in addition
+            to the latest checkpoint. Zero retains only the latest.
+        flow_num_steps: Integration steps for flow-policy rollout sampling, also
+            recorded with checkpoints. Ignored by MSE policies.
+        num_video_episodes: Maximum episodes recorded per selection or final evaluation.
+            Zero disables video recording.
+        video_size: Video frame dimensions as width and height. Both must be positive
+            and even when recording is enabled.
+        seed: Nonnegative root seed defining the experiment’s random-stream family. Keep
+            it fixed when varying individual streams.
+        data_split_variation: Realization of the stream that selects the fixed training
+            and validation episode split.
+        model_init_variation: Realization of the parameter-initialization stream for a
+            fresh policy. Not used for loaded weights.
+        train_loader_variation: Realization of the training-loader generator, which
+            advances across epoch shuffles.
+        train_loss_variation: Realization of the training-loss generator, including
+            stochastic loss sampling and active dropout.
+        validation_loader_variation: Realization of the validation-loader generator.
+            Validation sample order remains fixed.
+        validation_loss_variation: Realization of the loss generator restarted for each
+            validation pass to use matching random draws.
+        eval_env_variation: Realization of environment randomness for
+            checkpoint-selection rollouts.
+        eval_policy_variation: Realization of policy-sampling randomness for
+            checkpoint-selection rollouts.
+        final_eval_env_variation: Realization of the separate final-evaluation
+            environment stream.
+        final_eval_policy_variation: Realization of the separate final-evaluation
+            policy-sampling stream.
+        log_csv: Write training, validation, selection-evaluation, and final-evaluation
+            CSV metrics.
+        log_wandb: Initialize W&B and upload metrics, videos, and checkpoint artifacts.
+            False disables W&B integration.
+        log_interval: Optimizer steps between training-metric reports. Metrics are also
+            reported on the last scheduled training step.
+        wandb_project: W&B project used when W&B logging is enabled.
+        exp_name: Optional suffix appended to the automatically generated experiment name
+            containing the seed and timestamp.
+        show_summary: Print effective configuration and dataset/model information before
+            training.
+    """
+
     # Policy initialization.
     # A loaded policy supplies its own architecture and normalizer.
     init_from: Path | None = None
@@ -114,6 +220,28 @@ class TrainConfig:
     show_summary: bool = True
 
     def __post_init__(self) -> None:
+        """Check supported configuration bounds when the dataclass is created.
+
+        - Counts and intervals: num_epochs, batch_size, chunk_size, log_interval,
+          validation_interval, eval_interval, eval_episodes, final_eval_episodes,
+          and flow_num_steps must be positive.
+        - Plateau stopping: if set, early_stopping_patience must be positive.
+          early_stopping_min_epochs must be nonnegative; early_stopping_min_delta
+          must be finite and nonnegative.
+        - Dropout: if set, dropout_p must be in [0, 1).
+        - Checkpoints and video: checkpoint_top_k and num_video_episodes must be
+          nonnegative. With recording enabled, both video dimensions must be
+          positive and even.
+        - Randomness: the root seed must be a nonnegative integer. Training,
+          validation, and selection stream variations must be integers in
+          [0, 2**32). Booleans are rejected. Final-evaluation variations are
+          validated when their streams are used, rather than here.
+
+        Raises:
+            TypeError: The root seed or a checked stream variation is not a
+                Python integer (booleans are rejected).
+            ValueError: A checked value lies outside its supported bounds.
+        """
         for name in (
             "num_epochs",
             "batch_size",
@@ -175,6 +303,25 @@ def parse_train_config(
     defaults: TrainConfig | None = None,
     description: str = "Train a Push-T MLP policy.",
 ) -> TrainConfig:
+    """Parse command-line options into a validated training configuration.
+
+    Use Tyro's dataclass interface. When no defaults are supplied, construct the
+    standard `TrainConfig` first; parsed construction runs its validation hook.
+
+    Args:
+        args: Explicit option strings, or `None` to read process command-line arguments.
+        defaults: Default configuration for omitted options, or `None` for standard
+            field defaults.
+        description: Description displayed by Tyro's generated help.
+
+    Returns:
+        config: Parsed training configuration.
+
+    Raises:
+        SystemExit: Tyro handles help or reports command-line usage errors.
+
+    Configuration validation errors propagate from `TrainConfig`.
+    """
     defaults = defaults or TrainConfig()
     return tyro.cli(
         TrainConfig,
@@ -185,6 +332,19 @@ def parse_train_config(
 
 
 def config_to_dict(config: TrainConfig) -> dict[str, Any]:
+    """Copy configuration fields into a dictionary with top-level paths as strings.
+
+    Use dataclass `asdict`, then convert values that are directly `Path` instances.
+    This is not a general recursive JSON serializer; tuple values remain tuples.
+    The original configuration is unchanged.
+
+    Args:
+        config: Training configuration to represent for logging.
+
+    Returns:
+        values: Dictionary of copied field values, with top-level paths converted
+            to strings without resolving them.
+    """
     data = asdict(config)
     for key, value in data.items():
         if isinstance(value, Path):
@@ -198,6 +358,24 @@ def config_to_dict(config: TrainConfig) -> dict[str, Any]:
 # further training, if a training run fails mid training.
 @contextmanager
 def temp_checkpoint_dir(exp_name: str):
+    """Yield a temporary checkpoint directory and remove it only after success.
+
+    Create the directory under the system temporary location using a run-specific
+    prefix. If the context body raises, leave the directory for inspection;
+    operating-system cleanup policies can still remove it later. Normal exit calls
+    `shutil.rmtree`, whose failures propagate and may leave partial contents.
+
+    Args:
+        exp_name: Run name included in the `hw1-<name>-checkpoints-` directory prefix.
+
+    Yields:
+        directory (Path): Newly created directory for transient checkpoint files.
+            The caller may write files inside it but must not rely on it surviving
+            successful context exit.
+
+    Raises:
+        OSError: Temporary directory creation or normal-exit removal fails.
+    """
     path = Path(tempfile.mkdtemp(prefix=f"hw1-{exp_name}-checkpoints-"))
     yield path
     # Only clean up after successful completion.
@@ -214,13 +392,39 @@ def build_loaders(
     train_generator: torch.Generator,
     validation_generator: torch.Generator,
 ) -> tuple[DataLoader, DataLoader]:
-    """Build loaders over fixed train and validation subsets.
+    """Build normalized action-window loaders over fixed episode subsets.
 
-    The training generator advances to produce successive epoch shuffles.
-    Recreating it with the same identity at the start of another run reproduces
-    that shuffle sequence, assuming unchanged dataset and loader settings.
+    **Loader behavior**
 
-    Validation sample order is fixed. Neither generator changes split membership.
+    - Training shuffles with `train_generator` and drops the final incomplete batch.
+    - Validation preserves sample order and retains the final incomplete batch.
+    - Both use zero worker processes. Their supplied generators manage loader RNG;
+      fixed validation order does not imply its generator is never consumed.
+    - Neither generator changes episode split membership. Retain the training
+      generator across epochs to advance shuffles; recreate it to replay a run
+      with unchanged data and loader settings.
+
+    Args:
+        config: Batch-size and action-padding settings. Architecture is supplied
+            separately through `chunk_size` and the prepared data.
+        train_episodes: Fixed training subset of whole episodes.
+        validation_episodes: Fixed validation subset of whole episodes.
+        normalizer: Shared statistics applied when constructing both window datasets.
+        chunk_size: Action-window length, normally the actual policy horizon.
+        train_generator: CPU generator retained by the shuffled training loader.
+        validation_generator: CPU generator retained by the unshuffled validation loader.
+
+    Returns:
+        train_loader: Shuffled loader with `drop_last=True`.
+        validation_loader: Ordered loader with `drop_last=False`.
+
+    Raises:
+        ValueError: A child dataset rejects empty inputs, dimensions or chunk counts,
+            or PyTorch rejects loader settings.
+        TypeError: A child rejects a non-integer or boolean chunk size.
+
+    A valid window dataset can still yield zero training batches when every sample
+    falls in the dropped remainder; `run_training` checks this separately.
     """
     train_dataset = EpisodeChunkDataset(
         episodes=train_episodes,
@@ -263,7 +467,24 @@ def train_step(
     *,
     generator: torch.Generator,
 ) -> torch.Tensor:
-    """Run 1 step of training"""
+    """Compute loss, backpropagate, and take one optimizer step.
+
+    Set the model to training mode and clear gradients with `set_to_none=True`.
+    Then call `compute_loss`, run backward, and update parameters. The caller must
+    place the model and tensors on compatible devices. Mode, gradients, parameters,
+    and consumed randomness are not restored on exit or failure.
+
+    Args:
+        model: Policy to train; expected to return a differentiable scalar loss.
+        optimizer: Optimizer owning the policy parameters to update.
+        state: State batch already placed on the model device.
+        action_chunk: Target action windows in training coordinates on that device.
+        generator: Caller-owned loss/dropout generator on the sampling device.
+
+    Returns:
+        loss: Detached loss tensor from before the parameter update, retaining its
+            device. Detaching does not copy its storage.
+    """
     model.train()
     optimizer.zero_grad(set_to_none=True)
 
@@ -279,6 +500,63 @@ def train_step(
 
 
 def run_training(config: TrainConfig) -> None:
+    """Execute one fresh training run and write its experiment outputs.
+
+    **Data and initialization**
+
+    - Use an available Torch accelerator, otherwise CPU. Download/load Push-T data
+      and split whole episodes approximately 80/20 using the data-split stream.
+    - For a fresh policy, fit normalization only on training episodes and initialize
+      weights with the model-init stream. When loading a checkpoint, reuse its
+      architecture and normalization; optionally override dropout.
+    - Build window loaders using the actual model horizon. Start a new AdamW
+      optimizer and step counter even when weights came from a checkpoint.
+
+    **Reporting and selection**
+
+    - Report training-window means, validation loss, and selection rollouts at their
+      configured intervals and the last scheduled training step.
+    - Reuse training loss/loader generators across batches and epochs. Restart the
+      validation-loss generator for every complete validation pass. Selection
+      rollouts recreate indexed episode streams; final rollouts use separate streams.
+    - Save after each selection evaluation, retaining best K plus latest. Optional
+      plateau stopping counts eligible selection evaluations, with warm-up converted
+      from epochs to optimizer steps.
+    - On scheduled completion or plateau, reload the best currently tracked record
+      by `(score, step)` and run final evaluation. With latest-only retention this
+      normally selects the latest, not the best checkpoint from the full history.
+      Failed-cleanup records remain tracked and can refer to missing local files;
+      loading such a selected record propagates the failure.
+    - Flush any remaining training-metric window after leaving the loops. Plateau
+      stopping does not force an additional off-schedule validation pass.
+
+    **Output ownership**
+
+    Create a new `exp/seed_<seed>_<timestamp>[_suffix]` directory relative to the
+    working directory. Own the W&B and progress contexts; reject offline W&B runs.
+    Disable W&B explicitly for local-only training. CSV settings do not disable
+    checkpoint creation or the experiment directory. Final-evaluation videos
+    remain local; the final metric call does not submit their paths to W&B.
+
+    Persistent checkpoints stay under the experiment directory. When disabled,
+    use temporary checkpoints for selection/final evaluation and remove them only
+    on successful context exit. Failures propagate, close registered contexts, and
+    may leave partial experiment outputs or temporary checkpoints for inspection.
+    There is no transactional rollback or resumable optimizer/RNG-state snapshot.
+
+    Args:
+        config: Validated training settings. Loaded architecture overrides fresh-model
+            options; current training, logging, and evaluation settings still apply.
+
+    Raises:
+        ValueError: No complete training batches remain, W&B is offline, or a
+            delegated configuration/data/policy validation fails.
+        FileExistsError: The generated experiment directory or a required fresh
+            output destination already exists.
+
+    Dataset, device, filesystem, W&B, and encoding errors propagate. The function
+    returns no trained model; retained checkpoints and reports are its outputs.
+    """
     streams = RandomStreamFactory(root_seed=config.seed)
 
     device = torch.accelerator.current_accelerator()
@@ -676,6 +954,11 @@ def run_training(config: TrainConfig) -> None:
 
 
 def main() -> None:
+    """Parse process command-line options and run training.
+
+    Delegate CLI handling to `parse_train_config` and execution to `run_training`.
+    Help may exit through Tyro; training errors propagate to the invoking process.
+    """
     config = parse_train_config()
     run_training(config)
 

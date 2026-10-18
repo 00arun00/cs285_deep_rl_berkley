@@ -1,3 +1,24 @@
+"""Configure a Modal application for remote Push-T training.
+
+**Declared runtime**
+
+- Use the `hw1-imitation` application and named `hw1-imitation-volume`, mounted
+  at `/vol` with creation requested if missing.
+- Build a Debian-slim image with graphics libraries and `uv_sync` dependencies.
+  Package the current working directory (`.`) at `/root/project`, using the
+  simplified ignore rules from [load_gitignore_patterns][hw1_imitation.modal_train.load_gitignore_patterns].
+- If `~/.netrc` exists where module setup runs, add it to the image at
+  `/root/.netrc`. This is conditional file packaging, not a Modal secret lookup.
+- Configure a T4 GPU, two CPUs, a four-hour timeout, `/root/project/src` as
+  `PYTHONPATH`, and `/vol/wandb` as `WANDB_DIR`.
+
+These image, volume, and application declarations run when the module is
+imported. The decorated [train_remote][hw1_imitation.modal_train.train_remote]
+entry point parses training options and uses `/vol/data` as its default dataset
+location. The wrapper does not relocate the training driver's relative `exp/`
+output directory into the volume.
+"""
+
 from pathlib import Path
 
 import modal
@@ -15,8 +36,31 @@ volume = modal.Volume.from_name("hw1-imitation-volume", create_if_missing=True)
 
 
 def load_gitignore_patterns() -> list[str]:
-    """Translate .gitignore entries into Modal ignore globs."""
+    """Translate selected HW1 ignore entries into Modal directory-upload globs.
 
+    Look for `.gitignore` in the HW1 project root, identified by
+    `Path(__file__).resolve().parents[2]`. Return an empty list outside Modal's
+    local setup context or when that file is absent.
+    The upload itself packages `.`; callers should launch from the intended project
+    working directory so this ignore file and the uploaded tree correspond.
+
+    **Translation rules**
+
+    - Strip surrounding whitespace and skip empty lines, comments, and negations
+      beginning with `!`.
+    - Remove leading `/`, so root anchoring is not preserved.
+    - Convert trailing-directory entries to `**/<entry>/**`; otherwise prefix `**/`.
+
+    This is a simplified translation, not full Git ignore semantics. Negated
+    exceptions are discarded and anchored patterns become recursive.
+
+    Returns:
+        patterns: Ordered Modal ignore globs, or an empty list when no rules are read.
+
+    Raises:
+        OSError: Reading an existing ignore file fails.
+        UnicodeError: Its contents cannot be decoded as UTF-8.
+    """
     if not modal.is_local():
         return []
 
@@ -69,6 +113,27 @@ env = {
     cpu=DEFAULT_CPU,
 )
 def train_remote(*args: str) -> None:
+    """Parse training options, execute remotely, and commit the mounted volume.
+
+    Use `TrainConfig(data_dir=Path("/vol/data"))` as the parser defaults. Explicit
+    options can override the data directory and all other supported training
+    settings. Parsing uses these supplied arguments, not the remote process argv.
+
+    Call `volume.commit()` only after `run_training` returns normally. Parse,
+    training, or commit errors propagate; there is no explicit commit in a failure
+    handler. Files outside the mounted `/vol` tree are not persisted by this call.
+
+    Args:
+        *args: Individual command-line option strings accepted by
+            [parse_train_config][hw1_imitation.train.parse_train_config], for example
+            `"--num-epochs", "1", "--no-log-wandb"`.
+
+    Raises:
+        SystemExit: Tyro handles help or rejects command-line options.
+
+    Training validation/runtime errors and Modal volume errors propagate from their
+    owners. This function returns no model or artifact object.
+    """
     defaults = TrainConfig(data_dir=Path(VOLUME_PATH) / "data")
     config = parse_train_config(
         list(args),
