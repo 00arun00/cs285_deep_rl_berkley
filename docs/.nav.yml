@@ -1,6 +1,7 @@
 nav:
   - Overview: index.md
-  - Experiment guides: hw1
+  - Project guides:
+      - Push-T imitation learning: hw1
   - Reference: reference
   - Contributing: contributing
   - glob: "*"

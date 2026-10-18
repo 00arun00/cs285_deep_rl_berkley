@@ -2,9 +2,17 @@
 
 Exercise training, validation, and policy evaluation without W&B uploads, metric CSVs, or recorded videos. This recipe applies to the Push-T imitation trainer in `hw1`; it runs real training, not a dry run.
 
+## Before you run
+
+1. Complete [environment setup](setup.md) and its CLI-help check.
+2. Open a terminal in **`hw1/`**. Allow dataset download if the data is absent, or supply an existing dataset as described below.
+3. Keep the complete flag set: each output control disables a different side effect.
+
+The expectations below were checked against the implementation; this recipe was **not executed as part of writing this guide**. No measured runtime or score is implied.
+
 ## Run locally
 
-With `uv` installed, open a terminal in `hw1` and run:
+From `hw1/`, run:
 
 ```bash title="hw1 · terminal"
 uv run src/hw1_imitation/train.py \
@@ -17,7 +25,20 @@ uv run src/hw1_imitation/train.py \
   --final-eval-episodes 1
 ```
 
-No W&B login is needed. The trainer uses an available accelerator, or CPU if none is available. Runtime depends on the machine; one epoch still processes the training split.
+No W&B login is needed. The trainer uses an available accelerator, or CPU if none is available. Runtime depends on the machine; one epoch still processes the training loader; its final incomplete batch is dropped.
+
+## Recognize successful completion
+
+With the recipe unchanged, the source defines this sequence:
+
+1. A **Push-T · Training summary** table shows the effective configuration, dataset, device, and output directory.
+2. Training runs for one epoch. Validation and selection rollouts run at their configured intervals and at the final training step.
+3. The best retained checkpoint is loaded for a separate one-episode final evaluation.
+4. The process returns successfully after cleanup. In an interactive terminal, the progress description ends at **Done**; non-interactive output may suppress progress bars.
+
+A returned shell prompt alone is not proof of success: check that there is no traceback and that the process exits with status zero. In a POSIX shell, run `echo $?` immediately after the training command to inspect its status.
+
+This recipe deliberately leaves no metric CSVs, videos, or persistent policy checkpoints. The experiment directory remains, while the temporary checkpoint directory is removed after successful completion. Final scores are not persisted with both CSV and W&B logging disabled.
 
 ## Limit external side effects
 
@@ -58,3 +79,17 @@ uv run src/hw1_imitation/train.py --help
 ```
 
 The command uses the same `hw1` working directory. Help displays the current flags and defaults without starting training.
+
+## If the run fails
+
+| Symptom | Next check |
+| --- | --- |
+| Import error or missing script | Confirm the `hw1/` working directory and repeat the [setup verification](setup.md#verify-the-setup). |
+| Dataset download or extraction error | Check network access, disk space, and the dataset layout under `--data-dir`. |
+| W&B login prompt or offline-mode error | Confirm `--no-log-wandb` is present; `WANDB_MODE=offline` alone does not disable W&B. |
+| `No training batches` | The configured batch size exceeds the available training examples; reduce `--batch-size` or inspect the dataset. |
+| Temporary checkpoints remain | Inspect the exception; failures retain temporary checkpoints and cleanup errors can leave partial contents. |
+
+Keep the traceback when diagnosing a failure. Run the relevant [automated checks](tests-and-checks.md) to separate code regressions from data or environment issues.
+
+For more symptom-specific checks, see [Troubleshooting](troubleshooting.md).
