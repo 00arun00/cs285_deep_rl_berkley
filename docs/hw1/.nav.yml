@@ -1,0 +1,5 @@
+nav:
+  - index.md
+  - test-runs.md
+  - glob: "*"
+    ignore_no_matches: true

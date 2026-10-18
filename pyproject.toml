@@ -1,0 +1,9 @@
+[project]
+name = "rl-documentation"
+version = "0.1.0"
+description = "Documentation tooling, independent of training environments"
+requires-python = ">=3.11"
+dependencies = ["zensical>=0.0.68,<0.1", "mkdocstrings-python>=1.18,<3"]
+
+[tool.uv]
+package = false
