@@ -328,6 +328,10 @@ def parse_train_config(
         args=args,
         default=defaults,
         description=description,
+        config=(
+            tyro.conf.FlagConversionOff,
+            tyro.conf.UsePythonSyntaxForLiteralCollections,
+        ),
     )
 
 
@@ -717,7 +721,7 @@ def run_training(config: TrainConfig) -> None:
         if run is not None and run.offline:
             raise ValueError(
                 "Offline W&B is not supported by this training driver. "
-                "Use --no-log-wandb for local-only runs."
+                "Use --log-wandb False for local-only runs."
             )
 
         logger = ExperimentLogger(log_dir, run=run, log_csv=config.log_csv)
