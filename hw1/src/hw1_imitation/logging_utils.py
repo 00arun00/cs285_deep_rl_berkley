@@ -420,6 +420,7 @@ class ExperimentLogger:
             self.run.define_metric("train/*", step_metric="global_step")
             self.run.define_metric("validation/*", step_metric="global_step")
             self.run.define_metric("eval/*", step_metric="global_step")
+            self.run.define_metric("eval/mean_reward", step_metric="global_step", summary="max")
             self.run.define_metric("final/*", step_metric="global_step")
 
     def _append_row(
