@@ -1,0 +1,69 @@
+name: pusht-mse-bayes
+project: cs285-hw1-imitation-learning
+method: bayes
+
+metric:
+  name: eval/mean_reward
+  goal: maximize
+
+command:
+  - ${env}
+  - uv
+  - run
+  - python
+  - -m
+  - hw1_imitation.train
+  - ${args}
+
+parameters:
+  policy_type:
+    value: mse
+
+  hidden_dims:
+    values:
+      - "(128, 128, 128)"
+      - "(256, 256, 256)"
+      - "(512, 512, 512)"
+
+  chunk_size:
+    values: [4, 8, 16]
+
+  pad_action_chunk_with_last_action:
+    values: [true, false]
+
+  lr:
+    distribution: log_uniform_values
+    min: 0.00001
+    max: 0.003
+
+  weight_decay:
+    distribution: log_uniform_values
+    min: 0.000001
+    max: 0.01
+
+  num_epochs:
+    value: 1000
+
+  eval_interval:
+    value: 2000
+
+  validation_interval:
+    value: 1000
+
+  final_eval_episodes:
+    value: 1000
+
+  early_stopping_patience:
+    value: 7
+
+  early_stopping_min_epochs:
+    value: 50
+
+  early_stopping_min_delta:
+    value: 0.001
+
+  checkpoint_top_k:
+    value: 1
+
+  num_video_episodes:
+    value: 0
