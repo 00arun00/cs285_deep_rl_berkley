@@ -1,5 +1,142 @@
 # Write documentation
 
+## Required standards
+
+Before completing any code change, review affected source docstrings,
+guides, and command examples and update them to reflect the implementation.
+
+### Module-level documentation
+
+Review the module-level docstring whenever adding or updating a module.
+Update it as needed to reflect the module's purpose, workflow, entry points,
+and limitations.
+
+Every Python module must have a non-empty module docstring.
+Use the opening triple-quoted string, not ordinary `#` comments, so the
+documentation tools can extract it.
+
+Write it as an orientation to the module:
+
+- State its purpose and responsibilities.
+- Explain the main workflow or how its components fit together.
+- Link to the relevant entry points using generated API references.
+- Describe important ownership rules, side effects, and limitations
+  where applicable.
+
+Scale the detail to the module. Keep individual parameter contracts in
+the corresponding callable docstrings.
+
+The existing [checkpoint module][hw1_imitation.checkpoint] provides a
+reference example:
+
+```python title="hw1/src/hw1_imitation/checkpoint.py · existing module docstring"
+"""Save and load self-contained policies for inference or a new training run.
+
+**Checkpoint contents**
+
+- Architecture configuration and learned model weights.
+- Runtime training configuration: per-layer dropout probabilities.
+- Observation/action normalization statistics and default flow inference steps.
+
+Use [save_policy][hw1_imitation.checkpoint.save_policy] to write a checkpoint,
+then [load_policy][hw1_imitation.checkpoint.load_policy] to reconstruct it without
+the original dataset. Weights are stored on CPU; configuration is plain data.
+
+Loading does not resume a training session. No optimizer, training position,
+or saved RNG state is restored. Further training uses a new optimizer and
+caller-owned randomness; saved dropout settings can be explicitly overridden.
+"""
+```
+
+This explains what the module stores, how to use it, and the distinction
+between loading a policy and resuming training.
+
+### Classes, fields, and callables
+
+Use Google-style docstrings beside the code:
+
+| Element | Required documentation |
+| --- | --- |
+| Class | Purpose, behavior, and relevant usage constraints. |
+| Class or stored instance field | Meaning in `Attributes`; ordinary implementation comments do not substitute for field documentation. |
+| Function or explicitly defined method | Purpose and relevant behavioral contract, including private helpers and constructors. |
+| Parameter | Meaning and constraints in `Args`. |
+| Returned or yielded value | Meaning in `Returns` or `Yields`, where applicable. |
+| Exception | Relevant failure conditions in `Raises`. |
+| Side effect | Explain meaningful effects such as writing files, changing state, or contacting an external service. |
+
+Type annotations and signatures do not replace descriptions. Inherited
+and imported/re-exported objects do not require duplicate documentation.
+
+For a complete existing example, read
+[load_policy][hw1_imitation.checkpoint.load_policy]. Its docstring explains
+the load sequence, ownership of randomness, device behavior, parameters,
+returned objects, and failure conditions.
+
+This excerpt shows how it documents returned values precisely:
+
+```python title="checkpoint.load_policy · existing docstring excerpt"
+    Returns:
+        model: Loaded policy in evaluation mode on `device`.
+        normalizer: Saved state/action statistics with independent copied storage.
+        inference_config: Dictionary containing the validated `flow_num_steps` default.
+```
+
+Use these existing examples as references for clarity and completeness;
+do not copy details that do not apply to the code being documented.
+
+### Guides and command examples
+
+When invocation or behavior changes, review the corresponding operational
+guides and examples.
+
+- State the working directory for commands.
+- Use language-labeled code blocks.
+- Explain relevant inputs, outputs, and side effects.
+- Use relative Markdown links between authored pages.
+- Link Python objects to their generated API documentation.
+
+Keep operational instructions in guides and API meanings in source
+docstrings. Apply updates within the approved scope; identify additional
+changes requiring approval before proceeding.
+
+## Required checks
+
+All production Python under `hw1/src` is covered by the documentation
+gate, including new modules and small helpers. Tests under `hw1/tests`
+are outside that gate.
+
+Before completing affected changes:
+
+1. Review documentation against the implementation.
+2. Build the documentation with strict validation.
+3. Run the whole-source documentation gate.
+
+From the repository root, after installing documentation dependencies
+and Ruff as described below:
+
+```bash title="Build and validate documentation"
+uv run --no-sync zensical build --strict
+uv run --no-sync python scripts/check_docs.py --all --report docs-coverage.json
+```
+
+See [Validate production documentation](#validate-production-documentation)
+for tooling setup and detailed enforcement.
+
+CI runs these checks too. Ordinary lint and application tests are not
+substitutes:
+
+- Ruff checks docstring style using the documentation configuration.
+- The documentation gate checks required structured descriptions and
+  reconciles source objects with generated API output.
+- Human review checks accuracy and whether module overviews, guides,
+  and examples adequately explain the implementation.
+
+The gate requires a non-empty module docstring; it cannot judge whether
+that overview explains the module well.
+
+Report which checks passed and any that could not be completed.
+
 ## Preview and build
 
 From the repository root:
@@ -72,12 +209,29 @@ still appear separately in search during this comparison phase.
 
 ### Validate production documentation
 
-After building, run the same gate used by CI:
+The [required checks](#required-checks) use the same whole-source gate as CI.
+
+Install documentation dependencies from the repository root:
+
+```bash title="Install documentation dependencies"
+uv sync --locked
+```
+
+Install Ruff:
+
+```bash title="Install documentation lint tooling"
+uv tool install ruff==0.14.10
+```
+
+After the strict build, run:
 
 ```bash title="Check production API documentation"
-uv tool install ruff==0.14.10
 uv run --no-sync python scripts/check_docs.py --all --report docs-coverage.json
 ```
+
+Ruff must be available on `PATH`. Alternatively, pass the path to an
+existing executable through `--ruff`. Ordinary Ruff invocation alone
+does not run the structured-documentation and generated-API checks.
 
 The default without `--all` is also whole-source enforcement. CI explicitly
 passes `--all` through `scripts/build_docs.py` before preparing an artifact.
