@@ -101,14 +101,14 @@ Use [randomness contracts](concepts/randomness.md) and repeat comparisons across
 
 | Symptom | Check and next step | Verify |
 | --- | --- | --- |
-| CSV files absent | Was `--no-log-csv` supplied, or did failure precede logger creation? | Inspect expected files using [the results guide](guides/inspect-results.md). |
-| W&B login prompt or offline error | Use `--no-log-wandb` for local-only work. Offline mode alone is unsupported. | A chosen local run does not initialize W&B. |
+| CSV files absent | Was `--log-csv False` supplied, or did failure precede logger creation? | Inspect expected files using [the results guide](guides/inspect-results.md). |
+| W&B login prompt or offline error | Use `--log-wandb False` for local-only work. Offline mode alone is unsupported. | A chosen local run does not initialize W&B. |
 | Videos absent | Check `num_video_episodes`, completed rollouts, and recording errors. CSV logging does not control recording. | Look in the correct selection/final video directory. |
-| Checkpoint absent after success | `--no-save-checkpoints` uses temporary storage that is removed on success; retention can remove older persistent files. | Compare flags and selected step with [retention rules](concepts/checkpoints.md). |
+| Checkpoint absent after success | `--save-checkpoints False` uses temporary storage that is removed on success; retention can remove older persistent files. | Compare flags and selected step with [retention rules](concepts/checkpoints.md). |
 | Temporary checkpoints remain after failure | They are intentionally retained when the training body raises; cleanup itself can also fail. Preserve them while diagnosing. | Read the original exception and confirm which storage path remains. |
 | Extra files/artifacts or cleanup warnings | Failed deletions remain tracked for retry during the process; retry state does not persist across runs. | Inspect actual local/remote state before choosing manual cleanup. |
 
-`--no-save-checkpoints` does not disable W&B uploads. Final CSV output can precede a later W&B reporting or cleanup failure. Use process status and traceback together with artifacts when deciding whether the run succeeded.
+`--save-checkpoints False` does not disable W&B uploads. Final CSV output can precede a later W&B reporting or cleanup failure. Use process status and traceback together with artifacts when deciding whether the run succeeded.
 
 ## Local versus CI
 
@@ -121,3 +121,10 @@ CI runs the [documented HW1 checks](tests-and-checks.md) on Linux with Python fr
 5. If the same code passes locally, preserve the CI traceback and investigate platform/device or environment differences rather than changing the assertion blindly.
 
 A useful handoff includes the exact command, revision, Python/backend details, traceback, relevant flags, and expected versus observed files. Exclude credentials from logs you share.
+
+## CLI arguments
+
+| Symptom | Next check | Expected result |
+| --- | --- | --- |
+| An old boolean flag is rejected | Replace bare flags and `--no-*` forms with explicit values such as `--log-wandb False`. | The [shared CLI](../reference/training.md#command-line-syntax) accepts the value. |
+| A tuple argument is rejected | Quote a Python tuple literal, such as `--hidden-dims "(256, 256, 256)"`. | One tuple argument reaches the parser. |

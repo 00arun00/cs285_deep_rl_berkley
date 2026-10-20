@@ -12,7 +12,7 @@ the pipeline with reduced output and evaluation budgets.
 ## Weights & Biases (wandb) login
 
 See [optional services and tools](../docs/hw1/setup.md) for W&B setup.
-Local-only runs with `--no-log-wandb` do not require W&B login.
+Local-only runs with `--log-wandb False` do not require W&B login.
 
 ## Using Modal
 

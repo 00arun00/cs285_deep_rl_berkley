@@ -29,14 +29,14 @@ uv run --no-sync src/hw1_imitation/train.py \
   --policy-type mse --dropout-p 0 --seed 42 \
   --num-epochs 20 --batch-size 128 --lr 0.0003 \
   --eval-episodes 5 --final-eval-episodes 100 \
-  --checkpoint-top-k 3 --num-video-episodes 0 --no-log-wandb \
+  --checkpoint-top-k 3 --num-video-episodes 0 --log-wandb False \
   --exp-name mse-dropout0
 
 uv run --no-sync src/hw1_imitation/train.py \
   --policy-type mse --dropout-p 0.2 --seed 42 \
   --num-epochs 20 --batch-size 128 --lr 0.0003 \
   --eval-episodes 5 --final-eval-episodes 100 \
-  --checkpoint-top-k 3 --num-video-episodes 0 --no-log-wandb \
+  --checkpoint-top-k 3 --num-video-episodes 0 --log-wandb False \
   --exp-name mse-dropout02
 ```
 

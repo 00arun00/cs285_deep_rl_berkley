@@ -57,7 +57,7 @@ exp/<run>/checkpoints/policy_step_<checkpoint_step>.pt
 
 The highest numbered checkpoint is latest, not necessarily best. Default retention keeps the best three plus latest; ties favor later steps. Cleanup failures can leave additional files.
 
-With `--no-save-checkpoints`, successful runs remove their temporary checkpoint directory. A metric row can therefore legitimately refer to a checkpoint that no longer exists. Failed runs may retain temporary checkpoints; the temporary prefix contains the run name.
+With `--save-checkpoints False`, successful runs remove their temporary checkpoint directory. A metric row can therefore legitimately refer to a checkpoint that no longer exists. Failed runs may retain temporary checkpoints; the temporary prefix contains the run name.
 
 For an available policy file, follow [Save, load, and train further](save-load-and-continue.md). See [retention behavior](../concepts/checkpoints.md) before treating an untracked or leftover file as a selected checkpoint.
 

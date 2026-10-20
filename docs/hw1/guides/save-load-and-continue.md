@@ -75,7 +75,7 @@ Replace the checkpoint path before running this real training command:
 uv run --no-sync src/hw1_imitation/train.py \
   --init-from /path/to/policy.pt \
   --num-epochs 20 --lr 0.0001 \
-  --no-log-wandb --num-video-episodes 0 \
+  --log-wandb False --num-video-episodes 0 \
   --exp-name continued-policy
 ```
 

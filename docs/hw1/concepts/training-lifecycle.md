@@ -71,7 +71,7 @@ After completion or a stop request, the trainer selects the highest-scoring reta
 | --- | --- |
 | CSV metrics | Separate training, validation, selection, and final-evaluation files when enabled. |
 | W&B | Metrics, videos, and checkpoint artifacts when enabled; offline mode is rejected. |
-| Policy checkpoints | Persistent by default; temporary with `--no-save-checkpoints`. |
+| Policy checkpoints | Persistent by default; temporary with `--save-checkpoints False`. |
 | Videos | Controlled independently by `--num-video-episodes`; not covered by checkpoint retention. |
 
 Temporary checkpoint storage is removed after normal completion and retained if the training body raises. Serialization, device, data, and upload failures can stop the run; cleanup failures have their own behavior described in [checkpoints](checkpoints.md).
