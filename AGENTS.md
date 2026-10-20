@@ -186,3 +186,8 @@ worktrees, read and follow
 [Branch and worktree conventions](.policies/branches-and-worktrees.md).
 
 This includes owner-prefix resolution and required user approvals.
+
+## Documentation
+
+Before completing any code change, read and follow
+[Documentation standards](.policies/documentation.md).
