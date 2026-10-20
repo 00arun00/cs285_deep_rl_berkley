@@ -89,7 +89,7 @@
         <aside class="md-banner">
           <div class="md-banner__inner md-grid md-typeset">
             
-            PR #43 preview — not released · <a href="https://github.com/00arun00/cs285_deep_rl_berkley/commit/68604c171ff558b3e76384215f1633b9ab7eb05b">68604c1</a>
+            PR #43 preview — not released · <a href="https://github.com/00arun00/cs285_deep_rl_berkley/commit/66355ba30035a0d6c8230c1a6f5518857794e3f7">66355ba</a>
           </div>
           
         </aside>
@@ -2340,13 +2340,18 @@ random streams and is not the configured search objective.</p>
 </span></code></pre></div>
 <div class="language-bash highlight"><span class="filename">hw1 · register a flow sweep</span><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>wandb<span class="w"> </span>sweep<span class="w"> </span>conf/sweeps/flow.yaml
 </span></code></pre></div>
+<p>To register a new sweep with a different display name without editing the YAML,
+pass <code>--name</code>. This overrides the YAML's <code>name</code> for the new sweep:</p>
+<div class="language-bash highlight"><span class="filename">hw1 · register a flow sweep with a custom name</span><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>wandb<span class="w"> </span>sweep<span class="w"> </span>--name<span class="w"> </span><span class="s2">"flow-experiment-2"</span><span class="w"> </span>conf/sweeps/flow.yaml
+</span></code></pre></div>
+<p>The same option works with <code>conf/sweeps/mse.yaml</code>.</p>
 <p>Registration contacts W&amp;B and returns a sweep ID and URL; it does not launch
 training. Save the full <code>ENTITY/PROJECT/SWEEP_ID</code> printed by W&amp;B. Registering both
 files creates separate sweeps with separate IDs. See the
 <a href="https://docs.wandb.ai/models/sweeps/initialize-sweeps">W&amp;B registration documentation</a>.</p>
 <h2 id="3-launch-a-bounded-number-of-trials">3. Launch a bounded number of trials<a class="headerlink" href="#3-launch-a-bounded-number-of-trials" title="Permanent link">&para;</a></h2>
 <p>Replace the placeholder below with the full ID from registration:</p>
-<div class="language-bash highlight"><span class="filename">hw1 · run up to five trials</span><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>hw1_imitation.sweep_agent<span class="w"> </span>--count<span class="w"> </span><span class="m">5</span><span class="w"> </span>ENTITY/PROJECT/SWEEP_ID
+<div class="language-bash highlight"><span class="filename">hw1 · run up to five trials</span><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>hw1_imitation.sweep_agent<span class="w"> </span>--count<span class="w"> </span><span class="m">5</span><span class="w"> </span>ENTITY/PROJECT/SWEEP_ID
 </span></code></pre></div>
 <p>This starts real training on the machine running the agent. The count limits this
 agent invocation, not the entire sweep; the YAMLs do not set a sweep-wide run cap.
@@ -2367,7 +2372,7 @@ persistent checkpoint storage enabled through training defaults. See
 <a href="../../concepts/checkpoints/">checkpoint behavior</a> for retention and failure handling.</p>
 <h2 id="4-continue-or-change-the-search">4. Continue or change the search<a class="headerlink" href="#4-continue-or-change-the-search" title="Permanent link">&para;</a></h2>
 <p>To request more trials for the same registered definition, reuse its ID:</p>
-<div class="language-bash highlight"><span class="filename">hw1 · request five more trials</span><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>hw1_imitation.sweep_agent<span class="w"> </span>--count<span class="w"> </span><span class="m">5</span><span class="w"> </span>ENTITY/PROJECT/SWEEP_ID
+<div class="language-bash highlight"><span class="filename">hw1 · request five more trials</span><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>hw1_imitation.sweep_agent<span class="w"> </span>--count<span class="w"> </span><span class="m">5</span><span class="w"> </span>ENTITY/PROJECT/SWEEP_ID
 </span></code></pre></div>
 <p>Keep the code revision and environment recorded with the sweep. Reusing the ID
 does not restore your local code to its earlier state. If you change the local
