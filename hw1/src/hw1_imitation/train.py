@@ -703,21 +703,6 @@ def run_training(config: TrainConfig) -> None:
             else None
         )
 
-        progress = stack.enter_context(
-            tqdm(
-                total=total_steps,
-                desc="Train",
-                unit="step",
-                position=0,
-                leave=True,
-                dynamic_ncols=True,
-                mininterval=0.5,
-                miniters=1,
-                disable=None,
-                postfix=display_metrics,
-            )
-        )
-
         if run is not None and run.offline:
             raise ValueError(
                 "Offline W&B is not supported by this training driver. "
@@ -752,6 +737,21 @@ def run_training(config: TrainConfig) -> None:
                     steps_per_epoch=len(train_loader),
                 )
             )
+
+        progress = stack.enter_context(
+            tqdm(
+                total=total_steps,
+                desc="Train",
+                unit="step",
+                position=0,
+                leave=True,
+                dynamic_ncols=True,
+                mininterval=0.5,
+                miniters=1,
+                disable=None,
+                postfix=display_metrics,
+            )
+        )
 
         epoch = 0
         for epoch in range(config.num_epochs):

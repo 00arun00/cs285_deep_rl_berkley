@@ -9,7 +9,7 @@
 3. Build a fresh policy and fit normalization, or reconstruct both from `--init-from`.
 4. Apply an explicit dropout override if supplied; build training and validation loaders using the actual model horizon.
 5. Create a fresh AdamW optimizer, zero the training counter, and create a new experiment directory.
-6. Open logging, checkpoint storage, and progress contexts; print the effective configuration summary by default.
+6. Open checkpoint storage and logging; print the effective configuration summary by default, then create the training progress bar immediately before the training loop.
 
 The run directory is `hw1/exp/seed_<seed>_<timestamp>[_suffix]/` when launched from `hw1/`; `--exp-name` adds the suffix. Disabling metric outputs does not prevent directory creation.
 
