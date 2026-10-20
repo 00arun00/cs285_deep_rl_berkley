@@ -54,6 +54,7 @@ Files below are under `hw1/tests/`.
 | Retention | `test_checkpoint_retention.py`, `test_checkpoint_retention_properties.py` | Best/latest selection, ties, and cleanup retries after failures. |
 | Randomness | `test_randomness.py`, `test_evaluation_streams.py` | Stable stream identities, isolation, replay, and separation of final evaluation. |
 | Dropout | `test_generator_dropout.py`, `test_rng_modules.py`, `test_dropout_integration.py` | Explicit-generator behavior, evaluation mode, layer configuration, and checkpoint restoration. |
+| CLI and sweep configuration | `test_sweep_config.py` | Explicit-value syntax, caller defaults, and both `conf/sweeps/` YAMLs through W&B argument expansion into the shared CLI. |
 | Training outputs and control | `test_logging_controls.py`, `test_training_reporting.py`, `test_training_summary.py`, `test_evaluation_budgets.py`, `test_early_stopping.py` | Output switches, loss reporting, summary content, evaluation budgets, and plateau stopping. |
 
 Some cases use Hypothesis to explore generated inputs; others parameterize policy families or output settings. A test file can therefore collect many cases.
@@ -61,6 +62,10 @@ Some cases use Hypothesis to explore generated inputs; others parameterize polic
 ## What passing tests establishes
 
 The suite uses synthetic demonstrations and mocked data access, physics environments, and W&B services for training integration checks. It also exercises real tensor operations, policy serialization, and local file handling.
+
+Sweep checks use the installed W&B argument-expansion helper with representative
+parameter values and mock training. They do not register a sweep, run Bayesian
+search, or verify live W&B execution.
 
 - It does not require downloading the Push-T dataset or contacting W&B.
 - It writes temporary files and may write pytest, Python, and Hypothesis caches.

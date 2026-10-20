@@ -1,5 +1,6 @@
 nav:
   - Configure and compare experiments: compare-experiments.md
+  - Run a hyperparameter sweep: run-sweep.md
   - Inspect results and diagnose a run: inspect-results.md
   - Save, load, and continue training: save-load-and-continue.md
   - Add a random stream: add-random-stream.md

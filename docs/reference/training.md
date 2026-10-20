@@ -25,6 +25,10 @@ or `=`, such as `--log_wandb=False`. Omitted fields retain their defaults;
 configuration validation still runs after parsing. Replace old space-separated
 tuple elements with one quoted literal.
 
+For repeated trials, see [Run a hyperparameter sweep](../hw1/guides/run-sweep.md)
+and the [sweep configuration reference](sweeps.md). The YAMLs override selected
+fields; they do not change the defaults below.
+
 ## Training fields
 
 ::: hw1_imitation.train.TrainConfig

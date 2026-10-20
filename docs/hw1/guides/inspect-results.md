@@ -72,6 +72,24 @@ Selection videos live under `videos/step_<step padded to 8 digits>/`. Final-eval
 
 Inspect a few rollouts for missed contacts, unstable motion, and whether action chunks carry the pusher past useful states. Treat these as diagnostic observations; the aggregate score still comes from all evaluated episodes.
 
+## Inspect sweep trials
+
+Open the sweep URL returned at registration and inspect each trial's status and
+configuration. The periodic `eval/mean_reward` history shows checkpoint-selection
+scores; its maximum summary records the strongest observed score. The supplied
+YAMLs name this metric as the search objective.
+
+`final/mean_reward` describes a separate evaluation of the selected checkpoint.
+It is not the configured sweep objective. Check `final/checkpoint_step` and
+`final/selection_mean_reward` to connect that assessment to selection history.
+An objective value can be logged before training finishes, so check completion
+and final metrics before comparing trials.
+
+For local evidence, follow the CSV and checkpoint steps above for each trial's
+experiment directory. Keep the sweep ID, code revision, and sampled configuration
+with your comparison. Changing settings based on final scores makes those scores
+part of the selection process; see [metric interpretation](../concepts/evaluation.md#sweep-objective-and-final-assessment).
+
 ## 5. Explain surprising results
 
 | Observation | What to check next |

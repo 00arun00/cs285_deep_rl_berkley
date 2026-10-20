@@ -122,9 +122,13 @@ CI runs the [documented HW1 checks](tests-and-checks.md) on Linux with Python fr
 
 A useful handoff includes the exact command, revision, Python/backend details, traceback, relevant flags, and expected versus observed files. Exclude credentials from logs you share.
 
-## CLI arguments
+## CLI and sweep configuration
 
 | Symptom | Next check | Expected result |
 | --- | --- | --- |
 | An old boolean flag is rejected | Replace bare flags and `--no-*` forms with explicit values such as `--log-wandb False`. | The [shared CLI](../reference/training.md#command-line-syntax) accepts the value. |
 | A tuple argument is rejected | Quote a Python tuple literal, such as `--hidden-dims "(256, 256, 256)"`. | One tuple argument reaches the parser. |
+| Sweep YAML is not found | Run from `hw1/` and use `conf/sweeps/mse.yaml` or `conf/sweeps/flow.yaml`. | W&B can read the chosen definition. |
+| A changed YAML seems ignored | Register the edited definition and use its new sweep ID. | New trials use the new registered settings. |
+
+For registration, trial execution, and results, follow [Run a hyperparameter sweep](guides/run-sweep.md).

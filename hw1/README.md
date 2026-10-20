@@ -38,6 +38,13 @@ Then, you can download the logs and checkpoints to your local machine using a co
 uv run modal volume get hw1-imitation-volume exp/<experiment_name>
 ```
 
+## Hyperparameter sweeps
+
+Use [Run a hyperparameter sweep](../docs/hw1/guides/run-sweep.md) for the MSE and
+flow workflows. Definitions live in `conf/sweeps/`; see the
+[sweep configuration reference](../docs/reference/sweeps.md) before changing them.
+Individual runs and sweep trials share the [training CLI syntax](../docs/reference/training.md#command-line-syntax).
+
 ## Dropout
 
 See [Configure and compare experiments](../docs/hw1/guides/compare-experiments.md)
