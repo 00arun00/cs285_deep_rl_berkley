@@ -58,12 +58,24 @@ files creates separate sweeps with separate IDs. See the
 Replace the placeholder below with the full ID from registration:
 
 ```bash title="hw1 · run up to five trials"
-uv run --no-sync wandb agent --count 5 ENTITY/PROJECT/SWEEP_ID
+uv run --no-sync python -m hw1_imitation.sweep_agent --count 5 ENTITY/PROJECT/SWEEP_ID
 ```
 
 This starts real training on the machine running the agent. The count limits this
 agent invocation, not the entire sweep; the YAMLs do not set a sweep-wide run cap.
 Run one agent at a time initially to avoid competing for local compute.
+
+The [launcher][hw1_imitation.sweep_agent.main] accepts a positional `sweep_id`
+and optional `--count`; omitting the count leaves the agent without a local trial
+limit. It suppresses DEBUG and INFO messages from the parent W&B agent, including
+`Running runs:`, so routine status messages do not interrupt the training progress
+bar. Agent warnings and errors remain visible and can still interrupt the bar.
+The training subprocess's W&B startup messages, links, run history, and summary
+remain visible.
+
+This launcher filters W&B's internal `wandb.wandb_agent` logger; it does not set
+`WANDB_QUIET` or `WANDB_SILENT`. Recheck that logger integration when upgrading W&B.
+The sweep YAML still launches `hw1_imitation.train` for each trial.
 
 Each trial creates its own experiment directory under `exp/`, logs to W&B, and
 retains checkpoints. The supplied YAMLs disable videos but leave CSV logging and
@@ -75,7 +87,7 @@ persistent checkpoint storage enabled through training defaults. See
 To request more trials for the same registered definition, reuse its ID:
 
 ```bash title="hw1 · request five more trials"
-uv run --no-sync wandb agent --count 5 ENTITY/PROJECT/SWEEP_ID
+uv run --no-sync python -m hw1_imitation.sweep_agent --count 5 ENTITY/PROJECT/SWEEP_ID
 ```
 
 Keep the code revision and environment recorded with the sweep. Reusing the ID
