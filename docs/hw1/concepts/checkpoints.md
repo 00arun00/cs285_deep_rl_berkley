@@ -82,7 +82,7 @@ Final evaluation chooses the highest-scoring retained record. With K=0 and succe
 
 ## Storage flags and failure handling
 
-`--no-save-checkpoints` switches to temporary storage; it does not disable saving, retention, or W&B uploads. Temporary files are needed for final evaluation. Normal completion removes that directory; a raised training error leaves it for inspection, subject to operating-system cleanup.
+`--save-checkpoints False` switches to temporary storage; it does not disable saving, retention, or W&B uploads. Temporary files are needed for final evaluation. Normal completion removes that directory; a raised training error leaves it for inspection, subject to operating-system cleanup.
 
 With W&B enabled, saving proceeds locally, then uploads a model artifact and waits for completion before pruning. Uploads move `latest`, and move `best` when K is positive and the new step ranks first. Offline W&B is rejected.
 

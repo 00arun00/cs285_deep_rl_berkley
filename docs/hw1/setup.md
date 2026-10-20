@@ -55,6 +55,9 @@ Expected results:
 
 For the complete lint and test sequence, continue to [Tests and checks](tests-and-checks.md).
 
+See [training CLI syntax](../reference/training.md#command-line-syntax) for explicit
+boolean values and tuple arguments.
+
 ## Know which tools you need
 
 | Tool | Role | When you need it |
@@ -78,7 +81,7 @@ For a run that should upload metrics and artifacts, authenticate from `hw1/`:
 uv run --no-sync wandb login
 ```
 
-Follow the prompt for your W&B API key. This contacts the service and saves authentication for later runs. Skip login for the [small local test](test-runs.md), which supplies `--no-log-wandb`.
+Follow the prompt for your W&B API key. This contacts the service and saves authentication for later runs. Skip login for the [small local test](test-runs.md), which supplies `--log-wandb False`.
 
 ## Keep documentation tooling separate
 
@@ -92,6 +95,6 @@ The repository-root environment builds the site; it does not replace the `hw1/` 
 | Trainer script or `tests/` cannot be found | Confirm the working directory is `hw1/`, not the repository root. |
 | A module or test tool is missing | Run `uv sync --locked --dev` in `hw1/`, then retry through `uv run --no-sync`. |
 | Locked synchronization fails | Check that `pyproject.toml` and `uv.lock` belong to the same checkout. Resolve the dependency mismatch before retrying. |
-| W&B asks for credentials during a local test | Use every flag in the small-run recipe, including `--no-log-wandb`. |
+| W&B asks for credentials during a local test | Use every flag in the small-run recipe, including `--log-wandb False`. |
 
 For persistent environment, device, or CI differences, see [Troubleshooting](troubleshooting.md).

@@ -16,9 +16,9 @@ From `hw1/`, run:
 
 ```bash title="hw1 · terminal"
 uv run src/hw1_imitation/train.py \
-  --no-log-wandb \
-  --no-log-csv \
-  --no-save-checkpoints \
+  --log-wandb False \
+  --log-csv False \
+  --save-checkpoints False \
   --num-video-episodes 0 \
   --num-epochs 1 \
   --eval-episodes 1 \
@@ -44,12 +44,12 @@ This recipe deliberately leaves no metric CSVs, videos, or persistent policy che
 
 | Flag | Effect |
 | --- | --- |
-| `--no-log-wandb` | Skip W&B initialization, metrics, video uploads, and checkpoint artifacts. |
-| `--no-log-csv` | Do not create or append training, validation, evaluation, or final-evaluation CSVs. |
-| `--no-save-checkpoints` | Write checkpoints into a unique temporary directory. Remove that directory on success; retain it on failure. |
+| `--log-wandb False` | Skip W&B initialization, metrics, video uploads, and checkpoint artifacts. |
+| `--log-csv False` | Do not create or append training, validation, evaluation, or final-evaluation CSVs. |
+| `--save-checkpoints False` | Write checkpoints into a unique temporary directory. Remove that directory on success; retain it on failure. |
 | `--num-video-episodes 0` | Disable video recording for selection and final evaluation. |
 
-`--no-save-checkpoints` does not disable checkpoint creation or W&B uploads by itself. Pair it with `--no-log-wandb` for this local test. Temporary checkpoints are needed to load the best retained policy for final evaluation.
+`--save-checkpoints False` does not disable checkpoint creation or W&B uploads by itself. Pair it with `--log-wandb False` for this local test. Temporary checkpoints are needed to load the best retained policy for final evaluation.
 
 ## Reduce the run size
 
@@ -70,7 +70,7 @@ Validation and selection evaluation remain enabled, including selection evaluati
 
 To reuse an existing dataset, append `--data-dir /path/to/data-root`. That directory should contain `pusht/pusht_cchi_v7_replay.zarr`. An existing `pusht.zip` can also be extracted without downloading it again. These flags do not enforce network isolation.
 
-Use the local command above to avoid Modal execution. `WANDB_MODE=offline` is not a substitute for `--no-log-wandb`: the trainer rejects offline W&B runs.
+Use the local command above to avoid Modal execution. `WANDB_MODE=offline` is not a substitute for `--log-wandb False`: the trainer rejects offline W&B runs.
 
 ## Inspect available options
 
@@ -86,7 +86,7 @@ The command uses the same `hw1` working directory. Help displays the current fla
 | --- | --- |
 | Import error or missing script | Confirm the `hw1/` working directory and repeat the [setup verification](setup.md#verify-the-setup). |
 | Dataset download or extraction error | Check network access, disk space, and the dataset layout under `--data-dir`. |
-| W&B login prompt or offline-mode error | Confirm `--no-log-wandb` is present; `WANDB_MODE=offline` alone does not disable W&B. |
+| W&B login prompt or offline-mode error | Confirm `--log-wandb False` is present; `WANDB_MODE=offline` alone does not disable W&B. |
 | `No training batches` | The configured batch size exceeds the available training examples; reduce `--batch-size` or inspect the dataset. |
 | Temporary checkpoints remain | Inspect the exception; failures retain temporary checkpoints and cleanup errors can leave partial contents. |
 
