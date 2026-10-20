@@ -89,7 +89,7 @@
         <aside class="md-banner">
           <div class="md-banner__inner md-grid md-typeset">
             
-            Latest main — unreleased · <a href="https://github.com/00arun00/cs285_deep_rl_berkley/commit/7fdf7921682b923094821abd195884e825d77468">7fdf792</a>
+            Latest main — unreleased · <a href="https://github.com/00arun00/cs285_deep_rl_berkley/commit/2b729de15268219a8f32c5a940fd2822542a9461">2b729de</a>
           </div>
           
         </aside>
@@ -309,6 +309,8 @@
       
         
           
+        
+      
         
       
         
@@ -1146,6 +1148,8 @@
       
         
       
+        
+      
     
     
     
@@ -1205,6 +1209,33 @@
     
   
   Configure and compare experiments
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/run-sweep/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Run a hyperparameter sweep
 
     
   </span>
@@ -1424,6 +1455,8 @@
       
         
       
+        
+      
     
     
     
@@ -1519,6 +1552,33 @@
     
   
   Policies
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/sweeps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sweep configuration
 
     
   </span>
@@ -2247,6 +2307,11 @@
 <td>Explicit-generator behavior, evaluation mode, layer configuration, and checkpoint restoration.</td>
 </tr>
 <tr>
+<td>CLI and sweep configuration</td>
+<td><code>test_sweep_config.py</code></td>
+<td>Explicit-value syntax, caller defaults, and both <code>conf/sweeps/</code> YAMLs through W&amp;B argument expansion into the shared CLI.</td>
+</tr>
+<tr>
 <td>Training outputs and control</td>
 <td><code>test_logging_controls.py</code>, <code>test_training_reporting.py</code>, <code>test_training_summary.py</code>, <code>test_evaluation_budgets.py</code>, <code>test_early_stopping.py</code></td>
 <td>Output switches, loss reporting, summary content, evaluation budgets, and plateau stopping.</td>
@@ -2256,6 +2321,9 @@
 <p>Some cases use Hypothesis to explore generated inputs; others parameterize policy families or output settings. A test file can therefore collect many cases.</p>
 <h2 id="what-passing-tests-establishes">What passing tests establishes<a class="headerlink" href="#what-passing-tests-establishes" title="Permanent link">&para;</a></h2>
 <p>The suite uses synthetic demonstrations and mocked data access, physics environments, and W&amp;B services for training integration checks. It also exercises real tensor operations, policy serialization, and local file handling.</p>
+<p>Sweep checks use the installed W&amp;B argument-expansion helper with representative
+parameter values and mock training. They do not register a sweep, run Bayesian
+search, or verify live W&amp;B execution.</p>
 <ul>
 <li>It does not require downloading the Push-T dataset or contacting W&amp;B.</li>
 <li>It writes temporary files and may write pytest, Python, and Hypothesis caches.</li>

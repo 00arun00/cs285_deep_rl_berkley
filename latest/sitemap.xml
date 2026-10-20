@@ -76,6 +76,9 @@
         <loc>https://00arun00.github.io/cs285_deep_rl_berkley/latest/hw1/guides/inspect-results/</loc>
       </url>
       <url>
+        <loc>https://00arun00.github.io/cs285_deep_rl_berkley/latest/hw1/guides/run-sweep/</loc>
+      </url>
+      <url>
         <loc>https://00arun00.github.io/cs285_deep_rl_berkley/latest/hw1/guides/save-load-and-continue/</loc>
       </url>
       <url>
@@ -98,6 +101,9 @@
       </url>
       <url>
         <loc>https://00arun00.github.io/cs285_deep_rl_berkley/latest/reference/policies/</loc>
+      </url>
+      <url>
+        <loc>https://00arun00.github.io/cs285_deep_rl_berkley/latest/reference/sweeps/</loc>
       </url>
       <url>
         <loc>https://00arun00.github.io/cs285_deep_rl_berkley/latest/reference/training/</loc>

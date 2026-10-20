@@ -14,7 +14,7 @@
       
       
       
-        <link rel="prev" href="../policies/">
+        <link rel="prev" href="../sweeps/">
       
       
         <link rel="next" href="../../contributing/">
@@ -89,7 +89,7 @@
         <aside class="md-banner">
           <div class="md-banner__inner md-grid md-typeset">
             
-            Latest main — unreleased · <a href="https://github.com/00arun00/cs285_deep_rl_berkley/commit/7fdf7921682b923094821abd195884e825d77468">7fdf792</a>
+            Latest main — unreleased · <a href="https://github.com/00arun00/cs285_deep_rl_berkley/commit/2b729de15268219a8f32c5a940fd2822542a9461">2b729de</a>
           </div>
           
         </aside>
@@ -305,6 +305,8 @@
       
         
           
+        
+      
         
       
         
@@ -1028,6 +1030,8 @@
       
         
       
+        
+      
     
     
     
@@ -1087,6 +1091,33 @@
     
   
   Configure and compare experiments
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../hw1/guides/run-sweep/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Run a hyperparameter sweep
 
     
   </span>
@@ -1308,6 +1339,8 @@
       
         
       
+        
+      
     
     
     
@@ -1422,6 +1455,33 @@
                   
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../sweeps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sweep configuration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
     
   
   
@@ -1482,6 +1542,28 @@
       On this page
     </label>
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#command-line-syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Command-line syntax
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#training-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Training fields
+      </span>
+    </span>
+  </a>
+  
+</li>
       
         <li class="md-nav__item">
   <a href="#hw1_imitation.train.TrainConfig" class="md-nav__link">
@@ -2491,6 +2573,28 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#command-line-syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Command-line syntax
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#training-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Training fields
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#hw1_imitation.train.TrainConfig" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -2980,6 +3084,60 @@
 
 <h1 id="training-configuration">Training configuration<a class="headerlink" href="#training-configuration" title="Permanent link">&para;</a></h1>
 <p>These defaults come from the source. For a small local run, use the <a href="../../hw1/test-runs/">test-run recipe</a>.</p>
+<h2 id="command-line-syntax">Command-line syntax<a class="headerlink" href="#command-line-syntax" title="Permanent link">&para;</a></h2>
+<p>Run commands from <strong><code>hw1/</code></strong>. Individual runs and W&amp;B sweep trials use the same
+<code>hw1_imitation.train</code> parser. The Modal training entry point also shares this parser.</p>
+<div class="language-bash highlight"><span class="filename">hw1 · inspect available options</span><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>hw1_imitation.train<span class="w"> </span>--help
+</span></code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Example</th>
+<th>Accepted form</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Boolean</td>
+<td><code>--log-wandb False</code></td>
+<td>Explicit <code>True</code> or <code>False</code>; bare flags and the old <code>--no-*</code> forms are not accepted.</td>
+</tr>
+<tr>
+<td>Tuple</td>
+<td><code>--hidden-dims "(256, 256, 256)"</code></td>
+<td>One quoted Python tuple literal; a singleton is <code>"(256,)"</code>.</td>
+</tr>
+<tr>
+<td>Fixed-size tuple</td>
+<td><code>--video-size "(256, 256)"</code></td>
+<td>Exactly two integer dimensions.</td>
+</tr>
+<tr>
+<td>Optional value</td>
+<td><code>--init-from None</code></td>
+<td>Literal <code>None</code> clears an optional value.</td>
+</tr>
+<tr>
+<td>Number</td>
+<td><code>--lr 0.0003</code></td>
+<td>Supply a value of the field's declared type.</td>
+</tr>
+<tr>
+<td>Path</td>
+<td><code>--data-dir "data with spaces"</code></td>
+<td>Quote shell arguments containing spaces.</td>
+</tr>
+</tbody>
+</table>
+<p>Hyphens and underscores are accepted in option names. Values can follow a space
+or <code>=</code>, such as <code>--log_wandb=False</code>. Omitted fields retain their defaults;
+configuration validation still runs after parsing. Replace old space-separated
+tuple elements with one quoted literal.</p>
+<p>For repeated trials, see <a href="../../hw1/guides/run-sweep/">Run a hyperparameter sweep</a>
+and the <a href="../sweeps/">sweep configuration reference</a>. The YAMLs override selected
+fields; they do not change the defaults below.</p>
+<h2 id="training-fields">Training fields<a class="headerlink" href="#training-fields" title="Permanent link">&para;</a></h2>
 
 
 <div class="doc doc-object doc-class">
@@ -4091,7 +4249,7 @@ Python integer (booleans are rejected).</p>
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../policies/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Policies">
+          <a href="../sweeps/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Sweep configuration">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -4101,7 +4259,7 @@ Python integer (booleans are rejected).</p>
                 Previous
               </span>
               <div class="md-ellipsis">
-                Policies
+                Sweep configuration
               </div>
             </div>
           </a>

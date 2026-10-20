@@ -89,7 +89,7 @@
         <aside class="md-banner">
           <div class="md-banner__inner md-grid md-typeset">
             
-            Latest main — unreleased · <a href="https://github.com/00arun00/cs285_deep_rl_berkley/commit/7fdf7921682b923094821abd195884e825d77468">7fdf792</a>
+            Latest main — unreleased · <a href="https://github.com/00arun00/cs285_deep_rl_berkley/commit/2b729de15268219a8f32c5a940fd2822542a9461">2b729de</a>
           </div>
           
         </aside>
@@ -309,6 +309,8 @@
       
         
           
+        
+      
         
       
         
@@ -1044,6 +1046,8 @@
       
         
       
+        
+      
     
     
     
@@ -1103,6 +1107,33 @@
     
   
   Configure and compare experiments
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./guides/run-sweep/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Run a hyperparameter sweep
 
     
   </span>
@@ -1322,6 +1353,8 @@
       
         
       
+        
+      
     
     
     
@@ -1417,6 +1450,33 @@
     
   
   Policies
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/sweeps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sweep configuration
 
     
   </span>
@@ -2159,6 +2219,7 @@
 <h2 id="common-tasks">Common tasks<a class="headerlink" href="#common-tasks" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="guides/compare-experiments/">Configure and compare experiments</a>.</li>
+<li><a href="guides/run-sweep/">Run a hyperparameter sweep</a>.</li>
 <li><a href="guides/inspect-results/">Inspect results and diagnose a run</a>.</li>
 <li><a href="guides/save-load-and-continue/">Save, load, and train further</a>.</li>
 <li><a href="guides/add-random-stream/">Add a random stream</a>.</li>
@@ -2166,6 +2227,10 @@
 <li><a href="guides/change-policy/">Change or add a policy</a>.</li>
 </ul>
 <p>For failures or unexpected behavior, use <a href="troubleshooting/">Troubleshooting</a> to choose a diagnostic path.</p>
+<p>Individual commands and sweep trials use the same training pipeline. Use a direct
+command for a chosen configuration, or a W&amp;B sweep to search across configurations
+defined in <code>hw1/conf/sweeps/</code>. See <a href="../reference/training/#command-line-syntax">CLI syntax</a>
+and <a href="../reference/sweeps/">sweep configuration</a> for their input formats.</p>
 
 
 

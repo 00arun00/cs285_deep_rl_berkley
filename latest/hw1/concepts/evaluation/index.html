@@ -89,7 +89,7 @@
         <aside class="md-banner">
           <div class="md-banner__inner md-grid md-typeset">
             
-            Latest main — unreleased · <a href="https://github.com/00arun00/cs285_deep_rl_berkley/commit/7fdf7921682b923094821abd195884e825d77468">7fdf792</a>
+            Latest main — unreleased · <a href="https://github.com/00arun00/cs285_deep_rl_berkley/commit/2b729de15268219a8f32c5a940fd2822542a9461">2b729de</a>
           </div>
           
         </aside>
@@ -309,6 +309,8 @@
       
         
           
+        
+      
         
       
         
@@ -1054,6 +1056,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#sweep-objective-and-final-assessment" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sweep objective and final assessment
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#interpret-results-with-the-run-settings" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1157,6 +1170,8 @@
       
         
       
+        
+      
     
     
     
@@ -1216,6 +1231,33 @@
     
   
   Configure and compare experiments
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/run-sweep/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Run a hyperparameter sweep
 
     
   </span>
@@ -1435,6 +1477,8 @@
       
         
       
+        
+      
     
     
     
@@ -1530,6 +1574,33 @@
     
   
   Policies
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/sweeps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sweep configuration
 
     
   </span>
@@ -2155,6 +2226,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#sweep-objective-and-final-assessment" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sweep objective and final assessment
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#interpret-results-with-the-run-settings" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -2294,6 +2376,19 @@
 </tbody>
 </table>
 <p>Both budgets default to 100. Selection scores determine retention and plateau stopping; final scores do neither. Reusing a fixed selection setup helps compare checkpoints, but selecting the best result also favors that setup. Separate final streams provide another assessment without changing the selected policy.</p>
+<h2 id="sweep-objective-and-final-assessment">Sweep objective and final assessment<a class="headerlink" href="#sweep-objective-and-final-assessment" title="Permanent link">&para;</a></h2>
+<p>The supplied sweep YAMLs name <code>eval/mean_reward</code> as their objective and maximize
+it. The logger defines a maximum summary for this metric, so the best observed
+periodic score remains available alongside its history. Periodic evaluations
+therefore provide both checkpoint-selection evidence and search feedback.</p>
+<p>Final evaluation uses separate streams and reports <code>final/mean_reward</code>; the
+supplied sweep definitions do not optimize that metric. Separate streams do not
+make the result permanently independent of selection: if you choose configurations
+or revise the search based on final scores, those scores become part of your
+selection process. Confirm promising settings across multiple seeds and report
+that process explicitly.</p>
+<p>See <a href="../../../reference/sweeps/">Sweep configuration</a> for the inputs and
+<a href="../../guides/inspect-results/#inspect-sweep-trials">Inspect sweep trials</a> for the outputs.</p>
 <h2 id="interpret-results-with-the-run-settings">Interpret results with the run settings<a class="headerlink" href="#interpret-results-with-the-run-settings" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Compare rollout scores using the same environment, episode budget, random-stream choices, chunk horizon, and flow integration settings.</li>

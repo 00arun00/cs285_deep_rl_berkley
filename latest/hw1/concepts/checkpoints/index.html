@@ -89,7 +89,7 @@
         <aside class="md-banner">
           <div class="md-banner__inner md-grid md-typeset">
             
-            Latest main — unreleased · <a href="https://github.com/00arun00/cs285_deep_rl_berkley/commit/7fdf7921682b923094821abd195884e825d77468">7fdf792</a>
+            Latest main — unreleased · <a href="https://github.com/00arun00/cs285_deep_rl_berkley/commit/2b729de15268219a8f32c5a940fd2822542a9461">2b729de</a>
           </div>
           
         </aside>
@@ -309,6 +309,8 @@
       
         
           
+        
+      
         
       
         
@@ -1157,6 +1159,8 @@
       
         
       
+        
+      
     
     
     
@@ -1216,6 +1220,33 @@
     
   
   Configure and compare experiments
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/run-sweep/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Run a hyperparameter sweep
 
     
   </span>
@@ -1435,6 +1466,8 @@
       
         
       
+        
+      
     
     
     
@@ -1530,6 +1563,33 @@
     
   
   Policies
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/sweeps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sweep configuration
 
     
   </span>
@@ -2308,7 +2368,7 @@
 <p>Illustrative K=1 example: step 10 scores 0.8, step 20 scores 0.6. Both remain: step 10 is best, step 20 is latest. If step 30 scores 0.8, it wins the tie and is also latest; successful cleanup removes steps 10 and 20.</p>
 <p>Final evaluation chooses the highest-scoring retained record. With K=0 and successful cleanup, only latest is available, even if an earlier deleted checkpoint scored better.</p>
 <h2 id="storage-flags-and-failure-handling">Storage flags and failure handling<a class="headerlink" href="#storage-flags-and-failure-handling" title="Permanent link">&para;</a></h2>
-<p><code>--no-save-checkpoints</code> switches to temporary storage; it does not disable saving, retention, or W&amp;B uploads. Temporary files are needed for final evaluation. Normal completion removes that directory; a raised training error leaves it for inspection, subject to operating-system cleanup.</p>
+<p><code>--save-checkpoints False</code> switches to temporary storage; it does not disable saving, retention, or W&amp;B uploads. Temporary files are needed for final evaluation. Normal completion removes that directory; a raised training error leaves it for inspection, subject to operating-system cleanup.</p>
 <p>With W&amp;B enabled, saving proceeds locally, then uploads a model artifact and waits for completion before pruning. Uploads move <code>latest</code>, and move <code>best</code> when K is positive and the new step ranks first. Offline W&amp;B is rejected.</p>
 <table>
 <thead>

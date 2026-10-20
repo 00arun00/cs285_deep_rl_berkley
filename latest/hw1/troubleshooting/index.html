@@ -89,7 +89,7 @@
         <aside class="md-banner">
           <div class="md-banner__inner md-grid md-typeset">
             
-            Latest main — unreleased · <a href="https://github.com/00arun00/cs285_deep_rl_berkley/commit/7fdf7921682b923094821abd195884e825d77468">7fdf792</a>
+            Latest main — unreleased · <a href="https://github.com/00arun00/cs285_deep_rl_berkley/commit/2b729de15268219a8f32c5a940fd2822542a9461">2b729de</a>
           </div>
           
         </aside>
@@ -309,6 +309,8 @@
       
         
           
+        
+      
         
       
         
@@ -1042,6 +1044,8 @@
       
         
       
+        
+      
     
     
     
@@ -1101,6 +1105,33 @@
     
   
   Configure and compare experiments
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/run-sweep/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Run a hyperparameter sweep
 
     
   </span>
@@ -1421,6 +1452,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#cli-and-sweep-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        CLI and sweep configuration
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1458,6 +1500,8 @@
       
         
           
+        
+      
         
       
         
@@ -1561,6 +1605,33 @@
     
   
   Policies
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/sweeps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sweep configuration
 
     
   </span>
@@ -2229,6 +2300,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#cli-and-sweep-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        CLI and sweep configuration
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2515,12 +2597,12 @@
 <tbody>
 <tr>
 <td>CSV files absent</td>
-<td>Was <code>--no-log-csv</code> supplied, or did failure precede logger creation?</td>
+<td>Was <code>--log-csv False</code> supplied, or did failure precede logger creation?</td>
 <td>Inspect expected files using <a href="../guides/inspect-results/">the results guide</a>.</td>
 </tr>
 <tr>
 <td>W&amp;B login prompt or offline error</td>
-<td>Use <code>--no-log-wandb</code> for local-only work. Offline mode alone is unsupported.</td>
+<td>Use <code>--log-wandb False</code> for local-only work. Offline mode alone is unsupported.</td>
 <td>A chosen local run does not initialize W&amp;B.</td>
 </tr>
 <tr>
@@ -2530,7 +2612,7 @@
 </tr>
 <tr>
 <td>Checkpoint absent after success</td>
-<td><code>--no-save-checkpoints</code> uses temporary storage that is removed on success; retention can remove older persistent files.</td>
+<td><code>--save-checkpoints False</code> uses temporary storage that is removed on success; retention can remove older persistent files.</td>
 <td>Compare flags and selected step with <a href="../concepts/checkpoints/">retention rules</a>.</td>
 </tr>
 <tr>
@@ -2545,7 +2627,7 @@
 </tr>
 </tbody>
 </table>
-<p><code>--no-save-checkpoints</code> does not disable W&amp;B uploads. Final CSV output can precede a later W&amp;B reporting or cleanup failure. Use process status and traceback together with artifacts when deciding whether the run succeeded.</p>
+<p><code>--save-checkpoints False</code> does not disable W&amp;B uploads. Final CSV output can precede a later W&amp;B reporting or cleanup failure. Use process status and traceback together with artifacts when deciding whether the run succeeded.</p>
 <h2 id="local-versus-ci">Local versus CI<a class="headerlink" href="#local-versus-ci" title="Permanent link">&para;</a></h2>
 <p>CI runs the <a href="../tests-and-checks/">documented HW1 checks</a> on Linux with Python from <code>hw1/.python-version</code> and locked development dependencies.</p>
 <ol>
@@ -2556,6 +2638,39 @@
 <li>If the same code passes locally, preserve the CI traceback and investigate platform/device or environment differences rather than changing the assertion blindly.</li>
 </ol>
 <p>A useful handoff includes the exact command, revision, Python/backend details, traceback, relevant flags, and expected versus observed files. Exclude credentials from logs you share.</p>
+<h2 id="cli-and-sweep-configuration">CLI and sweep configuration<a class="headerlink" href="#cli-and-sweep-configuration" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Next check</th>
+<th>Expected result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>An old boolean flag is rejected</td>
+<td>Replace bare flags and <code>--no-*</code> forms with explicit values such as <code>--log-wandb False</code>.</td>
+<td>The <a href="../../reference/training/#command-line-syntax">shared CLI</a> accepts the value.</td>
+</tr>
+<tr>
+<td>A tuple argument is rejected</td>
+<td>Quote a Python tuple literal, such as <code>--hidden-dims "(256, 256, 256)"</code>.</td>
+<td>One tuple argument reaches the parser.</td>
+</tr>
+<tr>
+<td>Sweep YAML is not found</td>
+<td>Run from <code>hw1/</code> and use <code>conf/sweeps/mse.yaml</code> or <code>conf/sweeps/flow.yaml</code>.</td>
+<td>W&amp;B can read the chosen definition.</td>
+</tr>
+<tr>
+<td>A changed YAML seems ignored</td>
+<td>Register the edited definition and use its new sweep ID.</td>
+<td>New trials use the new registered settings.</td>
+</tr>
+</tbody>
+</table>
+<p>For registration, trial execution, and results, follow <a href="../guides/run-sweep/">Run a hyperparameter sweep</a>.</p>
 
 
 

@@ -89,7 +89,7 @@
         <aside class="md-banner">
           <div class="md-banner__inner md-grid md-typeset">
             
-            Latest main — unreleased · <a href="https://github.com/00arun00/cs285_deep_rl_berkley/commit/7fdf7921682b923094821abd195884e825d77468">7fdf792</a>
+            Latest main — unreleased · <a href="https://github.com/00arun00/cs285_deep_rl_berkley/commit/2b729de15268219a8f32c5a940fd2822542a9461">2b729de</a>
           </div>
           
         </aside>
@@ -309,6 +309,8 @@
       
         
           
+        
+      
         
       
         
@@ -1179,6 +1181,8 @@
       
         
       
+        
+      
     
     
     
@@ -1238,6 +1242,33 @@
     
   
   Configure and compare experiments
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/run-sweep/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Run a hyperparameter sweep
 
     
   </span>
@@ -1457,6 +1488,8 @@
       
         
       
+        
+      
     
     
     
@@ -1552,6 +1585,33 @@
     
   
   Policies
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/sweeps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Sweep configuration
 
     
   </span>
@@ -2269,6 +2329,9 @@
 <li>The named CLI-defaults test passes. This checks argument parsing against the configuration defaults; it does not establish that a real training run succeeds.</li>
 </ol>
 <p>For the complete lint and test sequence, continue to <a href="../tests-and-checks/">Tests and checks</a>.</p>
+<p>See <a href="../../reference/training/#command-line-syntax">training CLI syntax</a> for explicit
+boolean values and tuple arguments. To search across configurations after setup,
+follow <a href="../guides/run-sweep/">Run a hyperparameter sweep</a>.</p>
 <h2 id="know-which-tools-you-need">Know which tools you need<a class="headerlink" href="#know-which-tools-you-need" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -2326,7 +2389,7 @@
 <p>For a run that should upload metrics and artifacts, authenticate from <code>hw1/</code>:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>wandb<span class="w"> </span>login
 </span></code></pre></div>
-<p>Follow the prompt for your W&amp;B API key. This contacts the service and saves authentication for later runs. Skip login for the <a href="../test-runs/">small local test</a>, which supplies <code>--no-log-wandb</code>.</p>
+<p>Follow the prompt for your W&amp;B API key. This contacts the service and saves authentication for later runs. Skip login for the <a href="../test-runs/">small local test</a>, which supplies <code>--log-wandb False</code>.</p>
 <h2 id="keep-documentation-tooling-separate">Keep documentation tooling separate<a class="headerlink" href="#keep-documentation-tooling-separate" title="Permanent link">&para;</a></h2>
 <p>The repository-root environment builds the site; it does not replace the <code>hw1/</code> environment. Return to the root before following <a href="../../contributing/">documentation authoring</a>.</p>
 <h2 id="common-setup-mistakes">Common setup mistakes<a class="headerlink" href="#common-setup-mistakes" title="Permanent link">&para;</a></h2>
@@ -2356,7 +2419,7 @@
 </tr>
 <tr>
 <td>W&amp;B asks for credentials during a local test</td>
-<td>Use every flag in the small-run recipe, including <code>--no-log-wandb</code>.</td>
+<td>Use every flag in the small-run recipe, including <code>--log-wandb False</code>.</td>
 </tr>
 </tbody>
 </table>
