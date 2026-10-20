@@ -14,7 +14,7 @@
       
       
       
-        <link rel="prev" href="../rng_modules/">
+        <link rel="prev" href="../sweep_agent/">
       
       
       
@@ -87,7 +87,7 @@
         <aside class="md-banner">
           <div class="md-banner__inner md-grid md-typeset">
             
-            Latest main — unreleased · <a href="https://github.com/00arun00/cs285_deep_rl_berkley/commit/2b729de15268219a8f32c5a940fd2822542a9461">2b729de</a>
+            Latest main — unreleased · <a href="https://github.com/00arun00/cs285_deep_rl_berkley/commit/1751ed3bc42fa41442f1db717a351e5987bf39c7">1751ed3</a>
           </div>
           
         </aside>
@@ -383,6 +383,8 @@
       
         
           
+        
+      
         
       
         
@@ -1657,6 +1659,8 @@
       
         
       
+        
+      
     
     
     
@@ -1944,6 +1948,33 @@
     
   
   rng_modules
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../sweep_agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  sweep_agent
 
     
   </span>
@@ -5949,55 +5980,55 @@ returns no trained model; retained checkpoints and reports are its outputs.</p>
 </span><span id="__span-0-703"><a id="__codelineno-0-703" name="__codelineno-0-703"></a>            <span class="k">else</span> <span class="kc">None</span>
 </span><span id="__span-0-704"><a id="__codelineno-0-704" name="__codelineno-0-704"></a>        <span class="p">)</span>
 </span><span id="__span-0-705"><a id="__codelineno-0-705" name="__codelineno-0-705"></a>
-</span><span id="__span-0-706"><a id="__codelineno-0-706" name="__codelineno-0-706"></a>        <span class="n">progress</span> <span class="o">=</span> <span class="n">stack</span><span class="o">.</span><span class="n">enter_context</span><span class="p">(</span>
-</span><span id="__span-0-707"><a id="__codelineno-0-707" name="__codelineno-0-707"></a>            <span class="n">tqdm</span><span class="p">(</span>
-</span><span id="__span-0-708"><a id="__codelineno-0-708" name="__codelineno-0-708"></a>                <span class="n">total</span><span class="o">=</span><span class="n">total_steps</span><span class="p">,</span>
-</span><span id="__span-0-709"><a id="__codelineno-0-709" name="__codelineno-0-709"></a>                <span class="n">desc</span><span class="o">=</span><span class="s2">"Train"</span><span class="p">,</span>
-</span><span id="__span-0-710"><a id="__codelineno-0-710" name="__codelineno-0-710"></a>                <span class="n">unit</span><span class="o">=</span><span class="s2">"step"</span><span class="p">,</span>
-</span><span id="__span-0-711"><a id="__codelineno-0-711" name="__codelineno-0-711"></a>                <span class="n">position</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
-</span><span id="__span-0-712"><a id="__codelineno-0-712" name="__codelineno-0-712"></a>                <span class="n">leave</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-</span><span id="__span-0-713"><a id="__codelineno-0-713" name="__codelineno-0-713"></a>                <span class="n">dynamic_ncols</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-</span><span id="__span-0-714"><a id="__codelineno-0-714" name="__codelineno-0-714"></a>                <span class="n">mininterval</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span>
-</span><span id="__span-0-715"><a id="__codelineno-0-715" name="__codelineno-0-715"></a>                <span class="n">miniters</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
-</span><span id="__span-0-716"><a id="__codelineno-0-716" name="__codelineno-0-716"></a>                <span class="n">disable</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-0-717"><a id="__codelineno-0-717" name="__codelineno-0-717"></a>                <span class="n">postfix</span><span class="o">=</span><span class="n">display_metrics</span><span class="p">,</span>
-</span><span id="__span-0-718"><a id="__codelineno-0-718" name="__codelineno-0-718"></a>            <span class="p">)</span>
-</span><span id="__span-0-719"><a id="__codelineno-0-719" name="__codelineno-0-719"></a>        <span class="p">)</span>
-</span><span id="__span-0-720"><a id="__codelineno-0-720" name="__codelineno-0-720"></a>
-</span><span id="__span-0-721"><a id="__codelineno-0-721" name="__codelineno-0-721"></a>        <span class="k">if</span> <span class="n">run</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">run</span><span class="o">.</span><span class="n">offline</span><span class="p">:</span>
-</span><span id="__span-0-722"><a id="__codelineno-0-722" name="__codelineno-0-722"></a>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-</span><span id="__span-0-723"><a id="__codelineno-0-723" name="__codelineno-0-723"></a>                <span class="s2">"Offline W&amp;B is not supported by this training driver. "</span>
-</span><span id="__span-0-724"><a id="__codelineno-0-724" name="__codelineno-0-724"></a>                <span class="s2">"Use --log-wandb False for local-only runs."</span>
-</span><span id="__span-0-725"><a id="__codelineno-0-725" name="__codelineno-0-725"></a>            <span class="p">)</span>
-</span><span id="__span-0-726"><a id="__codelineno-0-726" name="__codelineno-0-726"></a>
-</span><span id="__span-0-727"><a id="__codelineno-0-727" name="__codelineno-0-727"></a>        <span class="n">logger</span> <span class="o">=</span> <span class="n">ExperimentLogger</span><span class="p">(</span><span class="n">log_dir</span><span class="p">,</span> <span class="n">run</span><span class="o">=</span><span class="n">run</span><span class="p">,</span> <span class="n">log_csv</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">log_csv</span><span class="p">)</span>
-</span><span id="__span-0-728"><a id="__codelineno-0-728" name="__codelineno-0-728"></a>        <span class="n">checkpoints</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">CheckpointRecord</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
-</span><span id="__span-0-729"><a id="__codelineno-0-729" name="__codelineno-0-729"></a>        <span class="n">pending_cleanup</span><span class="p">:</span> <span class="nb">set</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
-</span><span id="__span-0-730"><a id="__codelineno-0-730" name="__codelineno-0-730"></a>
-</span><span id="__span-0-731"><a id="__codelineno-0-731" name="__codelineno-0-731"></a>        <span class="k">if</span> <span class="n">config</span><span class="o">.</span><span class="n">show_summary</span><span class="p">:</span>
-</span><span id="__span-0-732"><a id="__codelineno-0-732" name="__codelineno-0-732"></a>            <span class="n">model_device</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span><span class="o">.</span><span class="n">device</span>
-</span><span id="__span-0-733"><a id="__codelineno-0-733" name="__codelineno-0-733"></a>            <span class="n">device_label</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">model_device</span><span class="p">)</span>
-</span><span id="__span-0-734"><a id="__codelineno-0-734" name="__codelineno-0-734"></a>            <span class="k">if</span> <span class="n">model_device</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="s2">"cuda"</span><span class="p">:</span>
-</span><span id="__span-0-735"><a id="__codelineno-0-735" name="__codelineno-0-735"></a>                <span class="n">device_label</span> <span class="o">+=</span> <span class="sa">f</span><span class="s2">" · </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">get_device_name</span><span class="p">(</span><span class="n">model_device</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span>
-</span><span id="__span-0-736"><a id="__codelineno-0-736" name="__codelineno-0-736"></a>            <span class="n">Console</span><span class="p">(</span><span class="n">stderr</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">print</span><span class="p">(</span>
-</span><span id="__span-0-737"><a id="__codelineno-0-737" name="__codelineno-0-737"></a>                <span class="n">build_training_summary</span><span class="p">(</span>
-</span><span id="__span-0-738"><a id="__codelineno-0-738" name="__codelineno-0-738"></a>                    <span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">,</span>
-</span><span id="__span-0-739"><a id="__codelineno-0-739" name="__codelineno-0-739"></a>                    <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
-</span><span id="__span-0-740"><a id="__codelineno-0-740" name="__codelineno-0-740"></a>                    <span class="n">run_name</span><span class="o">=</span><span class="n">exp_name</span><span class="p">,</span>
-</span><span id="__span-0-741"><a id="__codelineno-0-741" name="__codelineno-0-741"></a>                    <span class="n">device</span><span class="o">=</span><span class="n">device_label</span><span class="p">,</span>
-</span><span id="__span-0-742"><a id="__codelineno-0-742" name="__codelineno-0-742"></a>                    <span class="n">output_dir</span><span class="o">=</span><span class="n">log_dir</span><span class="p">,</span>
-</span><span id="__span-0-743"><a id="__codelineno-0-743" name="__codelineno-0-743"></a>                    <span class="n">dataset_path</span><span class="o">=</span><span class="n">zarr_path</span><span class="p">,</span>
-</span><span id="__span-0-744"><a id="__codelineno-0-744" name="__codelineno-0-744"></a>                    <span class="n">train_episodes</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">train_episodes_subset</span><span class="p">),</span>
-</span><span id="__span-0-745"><a id="__codelineno-0-745" name="__codelineno-0-745"></a>                    <span class="n">validation_episodes</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">validation_episodes_subset</span><span class="p">),</span>
-</span><span id="__span-0-746"><a id="__codelineno-0-746" name="__codelineno-0-746"></a>                    <span class="n">train_samples</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span>
-</span><span id="__span-0-747"><a id="__codelineno-0-747" name="__codelineno-0-747"></a>                        <span class="n">cast</span><span class="p">(</span><span class="n">Sequence</span><span class="p">,</span> <span class="n">train_loader</span><span class="o">.</span><span class="n">dataset</span><span class="p">)</span>
-</span><span id="__span-0-748"><a id="__codelineno-0-748" name="__codelineno-0-748"></a>                    <span class="p">),</span>  <span class="c1"># can be safely cast here since dataset does have len.</span>
-</span><span id="__span-0-749"><a id="__codelineno-0-749" name="__codelineno-0-749"></a>                    <span class="n">validation_samples</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span>
-</span><span id="__span-0-750"><a id="__codelineno-0-750" name="__codelineno-0-750"></a>                        <span class="n">cast</span><span class="p">(</span><span class="n">Sequence</span><span class="p">,</span> <span class="n">validation_loader</span><span class="o">.</span><span class="n">dataset</span><span class="p">)</span>
-</span><span id="__span-0-751"><a id="__codelineno-0-751" name="__codelineno-0-751"></a>                    <span class="p">),</span>  <span class="c1"># can be safely cast here since dataset does have len.</span>
-</span><span id="__span-0-752"><a id="__codelineno-0-752" name="__codelineno-0-752"></a>                    <span class="n">steps_per_epoch</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">train_loader</span><span class="p">),</span>
-</span><span id="__span-0-753"><a id="__codelineno-0-753" name="__codelineno-0-753"></a>                <span class="p">)</span>
-</span><span id="__span-0-754"><a id="__codelineno-0-754" name="__codelineno-0-754"></a>            <span class="p">)</span>
+</span><span id="__span-0-706"><a id="__codelineno-0-706" name="__codelineno-0-706"></a>        <span class="k">if</span> <span class="n">run</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">run</span><span class="o">.</span><span class="n">offline</span><span class="p">:</span>
+</span><span id="__span-0-707"><a id="__codelineno-0-707" name="__codelineno-0-707"></a>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+</span><span id="__span-0-708"><a id="__codelineno-0-708" name="__codelineno-0-708"></a>                <span class="s2">"Offline W&amp;B is not supported by this training driver. "</span>
+</span><span id="__span-0-709"><a id="__codelineno-0-709" name="__codelineno-0-709"></a>                <span class="s2">"Use --log-wandb False for local-only runs."</span>
+</span><span id="__span-0-710"><a id="__codelineno-0-710" name="__codelineno-0-710"></a>            <span class="p">)</span>
+</span><span id="__span-0-711"><a id="__codelineno-0-711" name="__codelineno-0-711"></a>
+</span><span id="__span-0-712"><a id="__codelineno-0-712" name="__codelineno-0-712"></a>        <span class="n">logger</span> <span class="o">=</span> <span class="n">ExperimentLogger</span><span class="p">(</span><span class="n">log_dir</span><span class="p">,</span> <span class="n">run</span><span class="o">=</span><span class="n">run</span><span class="p">,</span> <span class="n">log_csv</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">log_csv</span><span class="p">)</span>
+</span><span id="__span-0-713"><a id="__codelineno-0-713" name="__codelineno-0-713"></a>        <span class="n">checkpoints</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">CheckpointRecord</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+</span><span id="__span-0-714"><a id="__codelineno-0-714" name="__codelineno-0-714"></a>        <span class="n">pending_cleanup</span><span class="p">:</span> <span class="nb">set</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+</span><span id="__span-0-715"><a id="__codelineno-0-715" name="__codelineno-0-715"></a>
+</span><span id="__span-0-716"><a id="__codelineno-0-716" name="__codelineno-0-716"></a>        <span class="k">if</span> <span class="n">config</span><span class="o">.</span><span class="n">show_summary</span><span class="p">:</span>
+</span><span id="__span-0-717"><a id="__codelineno-0-717" name="__codelineno-0-717"></a>            <span class="n">model_device</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span><span class="o">.</span><span class="n">device</span>
+</span><span id="__span-0-718"><a id="__codelineno-0-718" name="__codelineno-0-718"></a>            <span class="n">device_label</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">model_device</span><span class="p">)</span>
+</span><span id="__span-0-719"><a id="__codelineno-0-719" name="__codelineno-0-719"></a>            <span class="k">if</span> <span class="n">model_device</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="s2">"cuda"</span><span class="p">:</span>
+</span><span id="__span-0-720"><a id="__codelineno-0-720" name="__codelineno-0-720"></a>                <span class="n">device_label</span> <span class="o">+=</span> <span class="sa">f</span><span class="s2">" · </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">get_device_name</span><span class="p">(</span><span class="n">model_device</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span>
+</span><span id="__span-0-721"><a id="__codelineno-0-721" name="__codelineno-0-721"></a>            <span class="n">Console</span><span class="p">(</span><span class="n">stderr</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">print</span><span class="p">(</span>
+</span><span id="__span-0-722"><a id="__codelineno-0-722" name="__codelineno-0-722"></a>                <span class="n">build_training_summary</span><span class="p">(</span>
+</span><span id="__span-0-723"><a id="__codelineno-0-723" name="__codelineno-0-723"></a>                    <span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">,</span>
+</span><span id="__span-0-724"><a id="__codelineno-0-724" name="__codelineno-0-724"></a>                    <span class="n">model</span><span class="o">=</span><span class="n">model</span><span class="p">,</span>
+</span><span id="__span-0-725"><a id="__codelineno-0-725" name="__codelineno-0-725"></a>                    <span class="n">run_name</span><span class="o">=</span><span class="n">exp_name</span><span class="p">,</span>
+</span><span id="__span-0-726"><a id="__codelineno-0-726" name="__codelineno-0-726"></a>                    <span class="n">device</span><span class="o">=</span><span class="n">device_label</span><span class="p">,</span>
+</span><span id="__span-0-727"><a id="__codelineno-0-727" name="__codelineno-0-727"></a>                    <span class="n">output_dir</span><span class="o">=</span><span class="n">log_dir</span><span class="p">,</span>
+</span><span id="__span-0-728"><a id="__codelineno-0-728" name="__codelineno-0-728"></a>                    <span class="n">dataset_path</span><span class="o">=</span><span class="n">zarr_path</span><span class="p">,</span>
+</span><span id="__span-0-729"><a id="__codelineno-0-729" name="__codelineno-0-729"></a>                    <span class="n">train_episodes</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">train_episodes_subset</span><span class="p">),</span>
+</span><span id="__span-0-730"><a id="__codelineno-0-730" name="__codelineno-0-730"></a>                    <span class="n">validation_episodes</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">validation_episodes_subset</span><span class="p">),</span>
+</span><span id="__span-0-731"><a id="__codelineno-0-731" name="__codelineno-0-731"></a>                    <span class="n">train_samples</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span>
+</span><span id="__span-0-732"><a id="__codelineno-0-732" name="__codelineno-0-732"></a>                        <span class="n">cast</span><span class="p">(</span><span class="n">Sequence</span><span class="p">,</span> <span class="n">train_loader</span><span class="o">.</span><span class="n">dataset</span><span class="p">)</span>
+</span><span id="__span-0-733"><a id="__codelineno-0-733" name="__codelineno-0-733"></a>                    <span class="p">),</span>  <span class="c1"># can be safely cast here since dataset does have len.</span>
+</span><span id="__span-0-734"><a id="__codelineno-0-734" name="__codelineno-0-734"></a>                    <span class="n">validation_samples</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span>
+</span><span id="__span-0-735"><a id="__codelineno-0-735" name="__codelineno-0-735"></a>                        <span class="n">cast</span><span class="p">(</span><span class="n">Sequence</span><span class="p">,</span> <span class="n">validation_loader</span><span class="o">.</span><span class="n">dataset</span><span class="p">)</span>
+</span><span id="__span-0-736"><a id="__codelineno-0-736" name="__codelineno-0-736"></a>                    <span class="p">),</span>  <span class="c1"># can be safely cast here since dataset does have len.</span>
+</span><span id="__span-0-737"><a id="__codelineno-0-737" name="__codelineno-0-737"></a>                    <span class="n">steps_per_epoch</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">train_loader</span><span class="p">),</span>
+</span><span id="__span-0-738"><a id="__codelineno-0-738" name="__codelineno-0-738"></a>                <span class="p">)</span>
+</span><span id="__span-0-739"><a id="__codelineno-0-739" name="__codelineno-0-739"></a>            <span class="p">)</span>
+</span><span id="__span-0-740"><a id="__codelineno-0-740" name="__codelineno-0-740"></a>
+</span><span id="__span-0-741"><a id="__codelineno-0-741" name="__codelineno-0-741"></a>        <span class="n">progress</span> <span class="o">=</span> <span class="n">stack</span><span class="o">.</span><span class="n">enter_context</span><span class="p">(</span>
+</span><span id="__span-0-742"><a id="__codelineno-0-742" name="__codelineno-0-742"></a>            <span class="n">tqdm</span><span class="p">(</span>
+</span><span id="__span-0-743"><a id="__codelineno-0-743" name="__codelineno-0-743"></a>                <span class="n">total</span><span class="o">=</span><span class="n">total_steps</span><span class="p">,</span>
+</span><span id="__span-0-744"><a id="__codelineno-0-744" name="__codelineno-0-744"></a>                <span class="n">desc</span><span class="o">=</span><span class="s2">"Train"</span><span class="p">,</span>
+</span><span id="__span-0-745"><a id="__codelineno-0-745" name="__codelineno-0-745"></a>                <span class="n">unit</span><span class="o">=</span><span class="s2">"step"</span><span class="p">,</span>
+</span><span id="__span-0-746"><a id="__codelineno-0-746" name="__codelineno-0-746"></a>                <span class="n">position</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+</span><span id="__span-0-747"><a id="__codelineno-0-747" name="__codelineno-0-747"></a>                <span class="n">leave</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-0-748"><a id="__codelineno-0-748" name="__codelineno-0-748"></a>                <span class="n">dynamic_ncols</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-0-749"><a id="__codelineno-0-749" name="__codelineno-0-749"></a>                <span class="n">mininterval</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span>
+</span><span id="__span-0-750"><a id="__codelineno-0-750" name="__codelineno-0-750"></a>                <span class="n">miniters</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-0-751"><a id="__codelineno-0-751" name="__codelineno-0-751"></a>                <span class="n">disable</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-0-752"><a id="__codelineno-0-752" name="__codelineno-0-752"></a>                <span class="n">postfix</span><span class="o">=</span><span class="n">display_metrics</span><span class="p">,</span>
+</span><span id="__span-0-753"><a id="__codelineno-0-753" name="__codelineno-0-753"></a>            <span class="p">)</span>
+</span><span id="__span-0-754"><a id="__codelineno-0-754" name="__codelineno-0-754"></a>        <span class="p">)</span>
 </span><span id="__span-0-755"><a id="__codelineno-0-755" name="__codelineno-0-755"></a>
 </span><span id="__span-0-756"><a id="__codelineno-0-756" name="__codelineno-0-756"></a>        <span class="n">epoch</span> <span class="o">=</span> <span class="mi">0</span>
 </span><span id="__span-0-757"><a id="__codelineno-0-757" name="__codelineno-0-757"></a>        <span class="k">for</span> <span class="n">epoch</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">num_epochs</span><span class="p">):</span>
@@ -6297,7 +6328,7 @@ Help may exit through Tyro; training errors propagate to the invoking process.</
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../rng_modules/" class="md-footer__link md-footer__link--prev" aria-label="Previous: rng_modules">
+          <a href="../sweep_agent/" class="md-footer__link md-footer__link--prev" aria-label="Previous: sweep_agent">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -6307,7 +6338,7 @@ Help may exit through Tyro; training errors propagate to the invoking process.</
                 Previous
               </span>
               <div class="md-ellipsis">
-                rng_modules
+                sweep_agent
               </div>
             </div>
           </a>

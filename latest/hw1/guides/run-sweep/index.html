@@ -89,7 +89,7 @@
         <aside class="md-banner">
           <div class="md-banner__inner md-grid md-typeset">
             
-            Latest main — unreleased · <a href="https://github.com/00arun00/cs285_deep_rl_berkley/commit/2b729de15268219a8f32c5a940fd2822542a9461">2b729de</a>
+            Latest main — unreleased · <a href="https://github.com/00arun00/cs285_deep_rl_berkley/commit/1751ed3bc42fa41442f1db717a351e5987bf39c7">1751ed3</a>
           </div>
           
         </aside>
@@ -387,6 +387,8 @@
       
         
           
+        
+      
         
       
         
@@ -1790,6 +1792,8 @@
       
         
       
+        
+      
     
     
     
@@ -2093,6 +2097,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../api/hw1_imitation/sweep_agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  sweep_agent
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../api/hw1_imitation/train/" class="md-nav__link">
         
   
@@ -2324,18 +2355,28 @@ files creates separate sweeps with separate IDs. See the
 <a href="https://docs.wandb.ai/models/sweeps/initialize-sweeps">W&amp;B registration documentation</a>.</p>
 <h2 id="3-launch-a-bounded-number-of-trials">3. Launch a bounded number of trials<a class="headerlink" href="#3-launch-a-bounded-number-of-trials" title="Permanent link">&para;</a></h2>
 <p>Replace the placeholder below with the full ID from registration:</p>
-<div class="language-bash highlight"><span class="filename">hw1 · run up to five trials</span><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>wandb<span class="w"> </span>agent<span class="w"> </span>--count<span class="w"> </span><span class="m">5</span><span class="w"> </span>ENTITY/PROJECT/SWEEP_ID
+<div class="language-bash highlight"><span class="filename">hw1 · run up to five trials</span><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>hw1_imitation.sweep_agent<span class="w"> </span>--count<span class="w"> </span><span class="m">5</span><span class="w"> </span>ENTITY/PROJECT/SWEEP_ID
 </span></code></pre></div>
 <p>This starts real training on the machine running the agent. The count limits this
 agent invocation, not the entire sweep; the YAMLs do not set a sweep-wide run cap.
 Run one agent at a time initially to avoid competing for local compute.</p>
+<p>The <a class="autorefs autorefs-internal" title="main" href="../../../api/hw1_imitation/sweep_agent/#hw1_imitation.sweep_agent.main">launcher</a> accepts a positional <code>sweep_id</code>
+and optional <code>--count</code>; omitting the count leaves the agent without a local trial
+limit. It suppresses DEBUG and INFO messages from the parent W&amp;B agent, including
+<code>Running runs:</code>, so routine status messages do not interrupt the training progress
+bar. Agent warnings and errors remain visible and can still interrupt the bar.
+The training subprocess's W&amp;B startup messages, links, run history, and summary
+remain visible.</p>
+<p>This launcher filters W&amp;B's internal <code>wandb.wandb_agent</code> logger; it does not set
+<code>WANDB_QUIET</code> or <code>WANDB_SILENT</code>. Recheck that logger integration when upgrading W&amp;B.
+The sweep YAML still launches <code>hw1_imitation.train</code> for each trial.</p>
 <p>Each trial creates its own experiment directory under <code>exp/</code>, logs to W&amp;B, and
 retains checkpoints. The supplied YAMLs disable videos but leave CSV logging and
 persistent checkpoint storage enabled through training defaults. See
 <a href="../../concepts/checkpoints/">checkpoint behavior</a> for retention and failure handling.</p>
 <h2 id="4-continue-or-change-the-search">4. Continue or change the search<a class="headerlink" href="#4-continue-or-change-the-search" title="Permanent link">&para;</a></h2>
 <p>To request more trials for the same registered definition, reuse its ID:</p>
-<div class="language-bash highlight"><span class="filename">hw1 · request five more trials</span><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>wandb<span class="w"> </span>agent<span class="w"> </span>--count<span class="w"> </span><span class="m">5</span><span class="w"> </span>ENTITY/PROJECT/SWEEP_ID
+<div class="language-bash highlight"><span class="filename">hw1 · request five more trials</span><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>hw1_imitation.sweep_agent<span class="w"> </span>--count<span class="w"> </span><span class="m">5</span><span class="w"> </span>ENTITY/PROJECT/SWEEP_ID
 </span></code></pre></div>
 <p>Keep the code revision and environment recorded with the sweep. Reusing the ID
 does not restore your local code to its earlier state. If you change the local

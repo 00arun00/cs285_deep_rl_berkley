@@ -89,7 +89,7 @@
         <aside class="md-banner">
           <div class="md-banner__inner md-grid md-typeset">
             
-            Latest main — unreleased · <a href="https://github.com/00arun00/cs285_deep_rl_berkley/commit/2b729de15268219a8f32c5a940fd2822542a9461">2b729de</a>
+            Latest main — unreleased · <a href="https://github.com/00arun00/cs285_deep_rl_berkley/commit/1751ed3bc42fa41442f1db717a351e5987bf39c7">1751ed3</a>
           </div>
           
         </aside>
@@ -387,6 +387,8 @@
       
         
           
+        
+      
         
       
         
@@ -1768,6 +1770,8 @@
       
         
       
+        
+      
     
     
     
@@ -2071,6 +2075,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../api/hw1_imitation/sweep_agent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  sweep_agent
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../api/hw1_imitation/train/" class="md-nav__link">
         
   
@@ -2232,7 +2263,7 @@
 <li>Build a fresh policy and fit normalization, or reconstruct both from <code>--init-from</code>.</li>
 <li>Apply an explicit dropout override if supplied; build training and validation loaders using the actual model horizon.</li>
 <li>Create a fresh AdamW optimizer, zero the training counter, and create a new experiment directory.</li>
-<li>Open logging, checkpoint storage, and progress contexts; print the effective configuration summary by default.</li>
+<li>Open checkpoint storage and logging; print the effective configuration summary by default, then create the training progress bar immediately before the training loop.</li>
 </ol>
 <p>The run directory is <code>hw1/exp/seed_&lt;seed&gt;_&lt;timestamp&gt;[_suffix]/</code> when launched from <code>hw1/</code>; <code>--exp-name</code> adds the suffix. Disabling metric outputs does not prevent directory creation.</p>
 <h2 id="one-optimizer-step-several-possible-checks">One optimizer step, several possible checks<a class="headerlink" href="#one-optimizer-step-several-possible-checks" title="Permanent link">&para;</a></h2>
