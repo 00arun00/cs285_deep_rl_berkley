@@ -56,7 +56,8 @@ Expected results:
 For the complete lint and test sequence, continue to [Tests and checks](tests-and-checks.md).
 
 See [training CLI syntax](../reference/training.md#command-line-syntax) for explicit
-boolean values and tuple arguments.
+boolean values and tuple arguments. To search across configurations after setup,
+follow [Run a hyperparameter sweep](guides/run-sweep.md).
 
 ## Know which tools you need
 

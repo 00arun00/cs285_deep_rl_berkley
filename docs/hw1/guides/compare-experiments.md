@@ -6,6 +6,12 @@ The commands below launch real training, may download demonstrations, and create
 
 ## 1. Define the comparison before launching
 
+Use individual commands for a planned comparison with chosen settings. Use
+[a hyperparameter sweep](run-sweep.md) to explore a search space through W&B.
+Both use the same trainer and [argument syntax](../../reference/training.md#command-line-syntax).
+After a search, confirm promising configurations across several seeds with matched
+evaluation budgets; a sweep's best trial alone does not establish a robust improvement.
+
 Write down the changed factor and the settings held constant:
 
 | Record | Why it matters |

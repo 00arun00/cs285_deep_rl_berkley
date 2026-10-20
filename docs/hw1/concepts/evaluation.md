@@ -93,6 +93,23 @@ sequenceDiagram
 
 Both budgets default to 100. Selection scores determine retention and plateau stopping; final scores do neither. Reusing a fixed selection setup helps compare checkpoints, but selecting the best result also favors that setup. Separate final streams provide another assessment without changing the selected policy.
 
+## Sweep objective and final assessment
+
+The supplied sweep YAMLs name `eval/mean_reward` as their objective and maximize
+it. The logger defines a maximum summary for this metric, so the best observed
+periodic score remains available alongside its history. Periodic evaluations
+therefore provide both checkpoint-selection evidence and search feedback.
+
+Final evaluation uses separate streams and reports `final/mean_reward`; the
+supplied sweep definitions do not optimize that metric. Separate streams do not
+make the result permanently independent of selection: if you choose configurations
+or revise the search based on final scores, those scores become part of your
+selection process. Confirm promising settings across multiple seeds and report
+that process explicitly.
+
+See [Sweep configuration](../../reference/sweeps.md) for the inputs and
+[Inspect sweep trials](../guides/inspect-results.md#inspect-sweep-trials) for the outputs.
+
 ## Interpret results with the run settings
 
 - Compare rollout scores using the same environment, episode budget, random-stream choices, chunk horizon, and flow integration settings.

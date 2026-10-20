@@ -52,6 +52,7 @@ For a first code reading, follow `train.py` → `data.py` → `model.py` → `ev
 ## Common tasks
 
 - [Configure and compare experiments](guides/compare-experiments.md).
+- [Run a hyperparameter sweep](guides/run-sweep.md).
 - [Inspect results and diagnose a run](guides/inspect-results.md).
 - [Save, load, and train further](guides/save-load-and-continue.md).
 - [Add a random stream](guides/add-random-stream.md).
@@ -59,3 +60,8 @@ For a first code reading, follow `train.py` → `data.py` → `model.py` → `ev
 - [Change or add a policy](guides/change-policy.md).
 
 For failures or unexpected behavior, use [Troubleshooting](troubleshooting.md) to choose a diagnostic path.
+
+Individual commands and sweep trials use the same training pipeline. Use a direct
+command for a chosen configuration, or a W&B sweep to search across configurations
+defined in `hw1/conf/sweeps/`. See [CLI syntax](../reference/training.md#command-line-syntax)
+and [sweep configuration](../reference/sweeps.md) for their input formats.
