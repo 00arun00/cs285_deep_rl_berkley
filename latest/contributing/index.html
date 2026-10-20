@@ -89,7 +89,7 @@
         <aside class="md-banner">
           <div class="md-banner__inner md-grid md-typeset">
             
-            Latest main — unreleased · <a href="https://github.com/00arun00/cs285_deep_rl_berkley/commit/1751ed3bc42fa41442f1db717a351e5987bf39c7">1751ed3</a>
+            Latest main — unreleased · <a href="https://github.com/00arun00/cs285_deep_rl_berkley/commit/7f5c43ce134dfd271bd591992e42e09896845be5">7f5c43c</a>
           </div>
           
         </aside>
@@ -2067,6 +2067,67 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#required-standards" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Required standards
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Required standards">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#module-level-documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Module-level documentation
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#classes-fields-and-callables" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Classes, fields, and callables
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#guides-and-command-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Guides and command examples
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#required-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Required checks
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#preview-and-build" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -2231,12 +2292,149 @@
 
 
 <h1 id="write-documentation">Write documentation<a class="headerlink" href="#write-documentation" title="Permanent link">&para;</a></h1>
+<h2 id="required-standards">Required standards<a class="headerlink" href="#required-standards" title="Permanent link">&para;</a></h2>
+<p>Before completing any code change, review affected source docstrings,
+guides, and command examples and update them to reflect the implementation.</p>
+<h3 id="module-level-documentation">Module-level documentation<a class="headerlink" href="#module-level-documentation" title="Permanent link">&para;</a></h3>
+<p>Review the module-level docstring whenever adding or updating a module.
+Update it as needed to reflect the module's purpose, workflow, entry points,
+and limitations.</p>
+<p>Every Python module must have a non-empty module docstring.
+Use the opening triple-quoted string, not ordinary <code>#</code> comments, so the
+documentation tools can extract it.</p>
+<p>Write it as an orientation to the module:</p>
+<ul>
+<li>State its purpose and responsibilities.</li>
+<li>Explain the main workflow or how its components fit together.</li>
+<li>Link to the relevant entry points using generated API references.</li>
+<li>Describe important ownership rules, side effects, and limitations
+  where applicable.</li>
+</ul>
+<p>Scale the detail to the module. Keep individual parameter contracts in
+the corresponding callable docstrings.</p>
+<p>The existing <a class="autorefs autorefs-internal" title="checkpoint" href="../api/hw1_imitation/checkpoint/#hw1_imitation.checkpoint">checkpoint module</a> provides a
+reference example:</p>
+<div class="language-python highlight"><span class="filename">hw1/src/hw1_imitation/checkpoint.py · existing module docstring</span><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="sd">"""Save and load self-contained policies for inference or a new training run.</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="sd">**Checkpoint contents**</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="sd">- Architecture configuration and learned model weights.</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="sd">- Runtime training configuration: per-layer dropout probabilities.</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="sd">- Observation/action normalization statistics and default flow inference steps.</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="sd">Use [save_policy][hw1_imitation.checkpoint.save_policy] to write a checkpoint,</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="sd">then [load_policy][hw1_imitation.checkpoint.load_policy] to reconstruct it without</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="sd">the original dataset. Weights are stored on CPU; configuration is plain data.</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="sd">Loading does not resume a training session. No optimizer, training position,</span>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="sd">or saved RNG state is restored. Further training uses a new optimizer and</span>
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="sd">caller-owned randomness; saved dropout settings can be explicitly overridden.</span>
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="sd">"""</span>
+</span></code></pre></div>
+<p>This explains what the module stores, how to use it, and the distinction
+between loading a policy and resuming training.</p>
+<h3 id="classes-fields-and-callables">Classes, fields, and callables<a class="headerlink" href="#classes-fields-and-callables" title="Permanent link">&para;</a></h3>
+<p>Use Google-style docstrings beside the code:</p>
+<table>
+<thead>
+<tr>
+<th>Element</th>
+<th>Required documentation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Class</td>
+<td>Purpose, behavior, and relevant usage constraints.</td>
+</tr>
+<tr>
+<td>Class or stored instance field</td>
+<td>Meaning in <code>Attributes</code>; ordinary implementation comments do not substitute for field documentation.</td>
+</tr>
+<tr>
+<td>Function or explicitly defined method</td>
+<td>Purpose and relevant behavioral contract, including private helpers and constructors.</td>
+</tr>
+<tr>
+<td>Parameter</td>
+<td>Meaning and constraints in <code>Args</code>.</td>
+</tr>
+<tr>
+<td>Returned or yielded value</td>
+<td>Meaning in <code>Returns</code> or <code>Yields</code>, where applicable.</td>
+</tr>
+<tr>
+<td>Exception</td>
+<td>Relevant failure conditions in <code>Raises</code>.</td>
+</tr>
+<tr>
+<td>Side effect</td>
+<td>Explain meaningful effects such as writing files, changing state, or contacting an external service.</td>
+</tr>
+</tbody>
+</table>
+<p>Type annotations and signatures do not replace descriptions. Inherited
+and imported/re-exported objects do not require duplicate documentation.</p>
+<p>For a complete existing example, read
+<a class="autorefs autorefs-internal" title="load_policy" href="../api/hw1_imitation/checkpoint/#hw1_imitation.checkpoint.load_policy">load_policy</a>. Its docstring explains
+the load sequence, ownership of randomness, device behavior, parameters,
+returned objects, and failure conditions.</p>
+<p>This excerpt shows how it documents returned values precisely:</p>
+<div class="language-python highlight"><span class="filename">checkpoint.load_policy · existing docstring excerpt</span><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>    <span class="n">Returns</span><span class="p">:</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>        <span class="n">model</span><span class="p">:</span> <span class="n">Loaded</span> <span class="n">policy</span> <span class="ow">in</span> <span class="n">evaluation</span> <span class="n">mode</span> <span class="n">on</span> <span class="err">`</span><span class="n">device</span><span class="err">`</span><span class="o">.</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>        <span class="n">normalizer</span><span class="p">:</span> <span class="n">Saved</span> <span class="n">state</span><span class="o">/</span><span class="n">action</span> <span class="n">statistics</span> <span class="k">with</span> <span class="n">independent</span> <span class="n">copied</span> <span class="n">storage</span><span class="o">.</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>        <span class="n">inference_config</span><span class="p">:</span> <span class="n">Dictionary</span> <span class="n">containing</span> <span class="n">the</span> <span class="n">validated</span> <span class="err">`</span><span class="n">flow_num_steps</span><span class="err">`</span> <span class="n">default</span><span class="o">.</span>
+</span></code></pre></div>
+<p>Use these existing examples as references for clarity and completeness;
+do not copy details that do not apply to the code being documented.</p>
+<h3 id="guides-and-command-examples">Guides and command examples<a class="headerlink" href="#guides-and-command-examples" title="Permanent link">&para;</a></h3>
+<p>When invocation or behavior changes, review the corresponding operational
+guides and examples.</p>
+<ul>
+<li>State the working directory for commands.</li>
+<li>Use language-labeled code blocks.</li>
+<li>Explain relevant inputs, outputs, and side effects.</li>
+<li>Use relative Markdown links between authored pages.</li>
+<li>Link Python objects to their generated API documentation.</li>
+</ul>
+<p>Keep operational instructions in guides and API meanings in source
+docstrings. Apply updates within the approved scope; identify additional
+changes requiring approval before proceeding.</p>
+<h2 id="required-checks">Required checks<a class="headerlink" href="#required-checks" title="Permanent link">&para;</a></h2>
+<p>All production Python under <code>hw1/src</code> is covered by the documentation
+gate, including new modules and small helpers. Tests under <code>hw1/tests</code>
+are outside that gate.</p>
+<p>Before completing affected changes:</p>
+<ol>
+<li>Review documentation against the implementation.</li>
+<li>Build the documentation with strict validation.</li>
+<li>Run the whole-source documentation gate.</li>
+</ol>
+<p>From the repository root, after installing documentation dependencies
+and Ruff as described below:</p>
+<div class="language-bash highlight"><span class="filename">Build and validate documentation</span><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>zensical<span class="w"> </span>build<span class="w"> </span>--strict
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>python<span class="w"> </span>scripts/check_docs.py<span class="w"> </span>--all<span class="w"> </span>--report<span class="w"> </span>docs-coverage.json
+</span></code></pre></div>
+<p>See <a href="#validate-production-documentation">Validate production documentation</a>
+for tooling setup and detailed enforcement.</p>
+<p>CI runs these checks too. Ordinary lint and application tests are not
+substitutes:</p>
+<ul>
+<li>Ruff checks docstring style using the documentation configuration.</li>
+<li>The documentation gate checks required structured descriptions and
+  reconciles source objects with generated API output.</li>
+<li>Human review checks accuracy and whether module overviews, guides,
+  and examples adequately explain the implementation.</li>
+</ul>
+<p>The gate requires a non-empty module docstring; it cannot judge whether
+that overview explains the module well.</p>
+<p>Report which checks passed and any that could not be completed.</p>
 <h2 id="preview-and-build">Preview and build<a class="headerlink" href="#preview-and-build" title="Permanent link">&para;</a></h2>
 <p>From the repository root:</p>
-<div class="language-bash highlight"><span class="filename">Start a local preview</span><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>sync<span class="w"> </span>--locked
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>zensical<span class="w"> </span>serve
+<div class="language-bash highlight"><span class="filename">Start a local preview</span><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>uv<span class="w"> </span>sync<span class="w"> </span>--locked
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>zensical<span class="w"> </span>serve
 </span></code></pre></div>
-<div class="language-bash highlight"><span class="filename">Build the static site</span><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>zensical<span class="w"> </span>build<span class="w"> </span>--strict
+<div class="language-bash highlight"><span class="filename">Build the static site</span><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>zensical<span class="w"> </span>build<span class="w"> </span>--strict
 </span></code></pre></div>
 <p>The site is written to <code>site/</code>. Documentation CI runs the strict build and whole-source documentation checks on every PR, on pushes to <code>main</code>, and on published releases. A separate trusted workflow publishes successful artifacts. Documentation dependencies are isolated from each training project's environment.</p>
 <h2 id="add-a-page">Add a page<a class="headerlink" href="#add-a-page" title="Permanent link">&para;</a></h2>
@@ -2244,17 +2442,17 @@
 <p>Use relative Markdown links such as <code>[Test runs](../hw1/test-runs.md)</code>. Keep operational guides in <code>docs/hw1/</code> and API pages in <code>docs/reference/</code>.</p>
 <h2 id="write-code-examples">Write code examples<a class="headerlink" href="#write-code-examples" title="Permanent link">&para;</a></h2>
 <p>Label fenced blocks with their language for syntax highlighting. Code blocks have a copy button. Add a filename with <code>title</code>, optional line numbers with <code>linenums</code>, and emphasized lines with <code>hl_lines</code>:</p>
-<div class="language-markdown highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="sb">```python</span><span class="w"> </span>title="example.py" linenums="1" hl_lines="2"
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">output</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"exp"</span><span class="p">)</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="nb">print</span><span class="p">(</span><span class="n">output</span><span class="p">)</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="sb">```</span>
+<div class="language-markdown highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="sb">```python</span><span class="w"> </span>title="example.py" linenums="1" hl_lines="2"
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">output</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"exp"</span><span class="p">)</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="nb">print</span><span class="p">(</span><span class="n">output</span><span class="p">)</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="sb">```</span>
 </span></code></pre></div>
-<div class="language-python highlight"><table class="highlighttable"><tr><th colspan="2" class="filename"><span class="filename">example.py</span></th></tr><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-3-1">1</a></span>
-<span class="normal"><a href="#__codelineno-3-2">2</a></span>
-<span class="normal"><a href="#__codelineno-3-3">3</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2"></a><span class="hll"><span class="n">output</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"exp"</span><span class="p">)</span>
-</span></span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3"></a><span class="nb">print</span><span class="p">(</span><span class="n">output</span><span class="p">)</span>
+<div class="language-python highlight"><table class="highlighttable"><tr><th colspan="2" class="filename"><span class="filename">example.py</span></th></tr><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-6-1">1</a></span>
+<span class="normal"><a href="#__codelineno-6-2">2</a></span>
+<span class="normal"><a href="#__codelineno-6-3">3</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2"></a><span class="hll"><span class="n">output</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"exp"</span><span class="p">)</span>
+</span></span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3"></a><span class="nb">print</span><span class="p">(</span><span class="n">output</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
 <h2 id="generate-api-documentation">Generate API documentation<a class="headerlink" href="#generate-api-documentation" title="Permanent link">&para;</a></h2>
 <p>The native <code>api-autonav</code> integration discovers production modules beneath
@@ -2282,10 +2480,19 @@ their duplicate renderings do not register symbolic targets. Link from authored
 guides with <code>[Normalizer][hw1_imitation.data.Normalizer]</code>. Distinct pages can
 still appear separately in search during this comparison phase.</p>
 <h3 id="validate-production-documentation">Validate production documentation<a class="headerlink" href="#validate-production-documentation" title="Permanent link">&para;</a></h3>
-<p>After building, run the same gate used by CI:</p>
-<div class="language-bash highlight"><span class="filename">Check production API documentation</span><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span><span class="nv">ruff</span><span class="o">==</span><span class="m">0</span>.14.10
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>python<span class="w"> </span>scripts/check_docs.py<span class="w"> </span>--all<span class="w"> </span>--report<span class="w"> </span>docs-coverage.json
+<p>The <a href="#required-checks">required checks</a> use the same whole-source gate as CI.</p>
+<p>Install documentation dependencies from the repository root:</p>
+<div class="language-bash highlight"><span class="filename">Install documentation dependencies</span><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>uv<span class="w"> </span>sync<span class="w"> </span>--locked
 </span></code></pre></div>
+<p>Install Ruff:</p>
+<div class="language-bash highlight"><span class="filename">Install documentation lint tooling</span><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span><span class="nv">ruff</span><span class="o">==</span><span class="m">0</span>.14.10
+</span></code></pre></div>
+<p>After the strict build, run:</p>
+<div class="language-bash highlight"><span class="filename">Check production API documentation</span><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>python<span class="w"> </span>scripts/check_docs.py<span class="w"> </span>--all<span class="w"> </span>--report<span class="w"> </span>docs-coverage.json
+</span></code></pre></div>
+<p>Ruff must be available on <code>PATH</code>. Alternatively, pass the path to an
+existing executable through <code>--ruff</code>. Ordinary Ruff invocation alone
+does not run the structured-documentation and generated-API checks.</p>
 <p>The default without <code>--all</code> is also whole-source enforcement. CI explicitly
 passes <code>--all</code> through <code>scripts/build_docs.py</code> before preparing an artifact.
 Ruff checks every production Python file; no training environment is installed.
