@@ -126,7 +126,7 @@ def train_remote(*args: str) -> None:
     Args:
         *args: Individual command-line option strings accepted by
             [parse_train_config][hw1_imitation.train.parse_train_config], for example
-            `"--num-epochs", "1", "--no-log-wandb"`.
+            `"--num-epochs", "1", "--log-wandb", "False"`.
 
     Raises:
         SystemExit: Tyro handles help or rejects command-line options.

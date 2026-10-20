@@ -1,13 +1,14 @@
 """Individual runs and W&B sweeps share explicit-value Tyro syntax."""
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 import yaml
 from wandb.sdk.launch.sweeps.utils import create_sweep_command_args
 
 from hw1_imitation import train
+from hw1_imitation.logging_utils import ExperimentLogger
 from hw1_imitation.train import TrainConfig, parse_train_config
 
 
@@ -45,6 +46,20 @@ def test_individual_training_cli_uses_explicit_values_and_caller_defaults():
     assert config.hidden_dims == (128, 256, 512)
     assert config.data_dir == defaults.data_dir
     assert parse_train_config([]) == TrainConfig()
+
+
+@pytest.mark.parametrize("policy", ["mse", "flow"])
+def test_sweep_objective_uses_maximum_periodic_evaluation_reward(policy, tmp_path):
+    """Keep both sweep objectives aligned with the logger's maximum summary."""
+    path = Path(__file__).parents[1] / "conf" / "sweeps" / f"{policy}.yaml"
+    sweep = yaml.safe_load(path.read_text())
+    assert sweep["metric"] == {"name": "eval/mean_reward", "goal": "maximize"}
+
+    run = Mock()
+    ExperimentLogger(tmp_path, run=run, log_csv=False)
+    run.define_metric.assert_any_call(
+        sweep["metric"]["name"], step_metric="global_step", summary="max"
+    )
 
 
 @pytest.mark.parametrize("policy", ["mse", "flow"])
