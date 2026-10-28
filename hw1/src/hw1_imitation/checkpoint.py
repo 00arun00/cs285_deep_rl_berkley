@@ -17,8 +17,11 @@ caller-owned randomness; saved dropout settings can be explicitly overridden.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
+import shutil
+import tempfile
 
 import torch
 
@@ -27,6 +30,37 @@ from hw1_imitation.model import BasePolicy, PolicyConfig, construct_policy
 from hw1_imitation.rng_modules import get_dropout_config, restore_dropout_config
 
 CHECKPOINT_VERSION = 1
+
+
+# Needed only to preserve the temp dir with checkpoints in case of runtime failure.
+# This directory will still be in /tmp so will get auto cleaned by os; based on os config.
+# But gives us the opportunity to inspect and potentially continue with
+# further training, if a training run fails mid training.
+@contextmanager
+def temp_checkpoint_dir(exp_name: str):
+    """Yield a temporary checkpoint directory and remove it only after success.
+
+    Create the directory under the system temporary location using a run-specific
+    prefix. If the context body raises, leave the directory for inspection;
+    operating-system cleanup policies can still remove it later. Normal exit calls
+    `shutil.rmtree`, whose failures propagate and may leave partial contents.
+
+    Args:
+        exp_name: Run name included in the `hw1-<name>-checkpoints-` directory prefix.
+
+    Yields:
+        directory (Path): Newly created directory for transient checkpoint files.
+            The caller may write files inside it but must not rely on it surviving
+            successful context exit.
+
+    Raises:
+        OSError: Temporary directory creation or normal-exit removal fails.
+    """
+    path = Path(tempfile.mkdtemp(prefix=f"hw1-{exp_name}-checkpoints-"))
+    yield path
+    # Only clean up after successful completion.
+    shutil.rmtree(path)
+
 
 
 def save_policy(
@@ -59,7 +93,7 @@ def save_policy(
             successful serialization to `path` with `.tmp` appended to its suffix.
         model: Policy whose architecture, weights, and dropout settings are saved.
         normalizer: Statistics used for training, with dimensions matching the
-            policy. Export revalidates statistics and copies their numerical storage.
+            policy. Export re-validates statistics and copies their numerical storage.
         flow_num_steps: Positive Python integer default for flow inference. Booleans
             are rejected. Validated even for MSE policies, which ignore it at sampling.
 
